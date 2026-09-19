@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Nightwave Music Player
+Comment=Play and organise your local music collection
+Exec=/home/mads/Projects/music-player-tefaz/node_modules/.bin/electron /home/mads/Projects/music-player-tefaz
+Icon=/home/mads/Projects/music-player-tefaz/assets/nightwave-icon.png
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true

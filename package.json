@@ -1,0 +1,15 @@
+{
+  "name": "nightwave-music-player",
+  "version": "1.0.0",
+  "description": "A desktop music player for local collections",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "private": true,
+  "dependencies": {
+    "electron": "^44.4.3",
+    "music-metadata": "^11.15.0",
+    "node-id3": "^0.2.9"
+  }
+}

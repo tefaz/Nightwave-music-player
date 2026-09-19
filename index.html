@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nightwave — Music Player</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#"><span class="brand-mark">⌁</span> nightwave</a>
+        <nav class="menu" aria-label="Main menu">
+          <button id="load-folder" class="menu-link"><span>＋</span> Load folder</button>
+          <button id="add-files" class="menu-link">Add files</button>
+          <button id="clear-library" class="menu-link danger">Clear library</button>
+          <input id="file-input" type="file" accept="audio/*" multiple hidden />
+          <input id="folder-input" type="file" accept="audio/*" webkitdirectory directory multiple hidden />
+        </nav>
+        <div class="top-actions"><button id="show-playing" class="show-playing" type="button" aria-label="Show currently playing song" title="Show currently playing song" disabled><span aria-hidden="true">♫</span><span>Now playing</span></button><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Filter this page" aria-label="Filter current songs" /></label></div>
+      </header>
+
+      <aside class="sidebar">
+        <div class="library-label">YOUR LIBRARY</div>
+        <button class="nav-item active" data-view="all"><span class="nav-icon">♫</span><span>All music</span><span id="track-count" class="count">0</span></button>
+        <div class="section-heading"><span>PLAYLISTS</span><button id="new-playlist" aria-label="Create playlist">＋</button></div>
+        <div id="playlist-list" class="playlist-list"></div>
+        <div class="sidebar-foot"><button id="load-folder-side" class="outline-button">＋ Add a music folder</button><p>Files and playlists are saved on this device.</p></div>
+        <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize playlist sidebar" aria-orientation="vertical"></div>
+      </aside>
+
+      <main class="main-content">
+        <div class="content-head">
+          <div><p class="eyebrow" id="view-kicker">LIBRARY</p><h1 id="view-title">All music</h1><p id="view-subtitle" class="subtitle">Your saved collection will appear here.</p></div>
+          <div class="content-actions"><button id="play-all" class="play-all">▶ <span>Play all</span></button><button id="sync-playlist" class="sync-playlist" type="button" title="Copy this playlist to your connected phone">⇧ <span>Sync to phone</span></button></div>
+        </div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-wave">♫</div><h2>Your library is quiet</h2><p>Load a music folder or add audio files to start listening.</p><button id="empty-load" class="primary-button">＋ Load music folder</button>
+        </div>
+        <div id="track-area" hidden>
+          <div class="track-header"><button data-sort="title">TITLE <i></i></button><button data-sort="artist">ARTIST NAME <i></i></button><button data-sort="album">ALBUM NAME <i></i></button><button data-sort="duration">TIME <i></i></button><span></span></div>
+          <div id="track-list" class="track-list"></div>
+        </div>
+      </main>
+
+      <footer class="player">
+        <div class="now-playing"><div id="artwork" class="artwork">♫</div><div class="song-text"><strong id="now-title">Nothing playing</strong><span id="now-artist">Choose a track from your library</span></div></div>
+        <div class="controls"><div class="transport"><button id="shuffle" class="control small" aria-label="Shuffle">⤨</button><button id="previous" class="control" aria-label="Previous">◀◀</button><button id="play" class="play-button" aria-label="Play">▶</button><button id="next" class="control" aria-label="Next">▶▶</button><button id="repeat" class="control small" aria-label="Repeat">↻</button></div><div class="timeline"><span id="current-time">0:00</span><input id="progress" type="range" min="0" max="100" value="0" aria-label="Song progress" /><span id="duration">0:00</span></div></div>
+        <div class="volume"><span>⌁</span><input id="volume" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Volume" /></div>
+      </footer>
+    </div>
+    <audio id="audio"></audio>
+    <script src="app.js"></script>
+  </body>
+</html>

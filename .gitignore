@@ -1,0 +1,7 @@
+node_modules/
+.agents/
+.codex/
+.nightwave-git/
+*.log
+.env
+.env.*
