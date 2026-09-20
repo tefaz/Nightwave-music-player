@@ -75,6 +75,31 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 .volume input[type=range] { background:linear-gradient(to right,#facc15 0%,#fb923c var(--value,0%),#3b3a40 var(--value,0%),#3b3a40 100%); }
 .playlist-item[draggable="true"] { cursor:grab; }.playlist-item[draggable="true"].dragging { cursor:grabbing; opacity:.5; }
 
+/* Custom title bar for the frameless Electron window. */
+.topbar { -webkit-app-region:drag; gap:34px; }
+.topbar button,.topbar a,.topbar label,.topbar input { -webkit-app-region:no-drag; }
+.window-controls { display:flex; align-self:stretch; margin-right:-26px; -webkit-app-region:no-drag; }
+.window-controls button { width:46px; color:#d2ccc5; font-size:18px; line-height:1; }
+.window-controls button:hover { background:#323035; color:#fff7df; }
+.window-controls .window-close { font-size:24px; font-weight:300; }
+.window-controls .window-close:hover { color:#fff; background:#c42b3a; }
+
+/* Keep destructive library maintenance out of the main header flow. */
+.topbar .library-tools { position:relative; -webkit-app-region:no-drag; }
+.library-tools summary { width:28px; color:#a8a29e; font-size:17px; line-height:32px; text-align:center; cursor:pointer; list-style:none; }
+.library-tools summary::-webkit-details-marker { display:none; }
+.library-tools summary:hover,.library-tools[open] summary { color:#fcd34d; }
+.library-tools-menu { position:absolute; z-index:20; top:calc(100% + 7px); right:0; min-width:132px; padding:5px; background:#24201d; border:1px solid #6b5140; border-radius:6px; box-shadow:0 12px 30px rgba(0,0,0,.38); }
+.library-tools-menu button { width:100%; padding:8px 10px; color:#f7c2ba; text-align:left; border-radius:4px; font-size:12px; }
+.library-tools-menu button:hover { color:#fff; background:rgba(239,68,68,.2); }
+.menu-link:disabled { cursor:default; opacity:.45; }
+.folder-dialog { width:min(560px,calc(100vw - 32px)); }
+.folder-list { display:grid; gap:7px; max-height:min(46vh,360px); margin:16px 0 0; padding:0; overflow:auto; list-style:none; }
+.folder-list li { display:flex; align-items:center; gap:10px; padding:8px; background:#171518; border:1px solid #40383a; border-radius:4px; }
+.folder-list code { flex:1; overflow-wrap:anywhere; color:#f6e7c6; font:11px 'DM Mono',monospace; }
+.folder-list button { flex:0 0 auto; padding:6px 8px; color:#f7c2ba; font-size:11px; }
+.folder-list button:hover { color:#fff; background:rgba(239,68,68,.2); }
+
 /* Keep the open playlist unmistakable, even when the pointer is elsewhere. */
 .playlist-item.selected { color:#fff7df; background:linear-gradient(90deg,rgba(251,191,36,.26),rgba(249,115,22,.19)); box-shadow:inset 3px 0 #fbbf24, inset 0 0 0 1px rgba(251,191,36,.22); }
 .playlist-item.selected .playlist-select { font-weight:700; }

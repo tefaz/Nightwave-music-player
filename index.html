@@ -15,12 +15,15 @@
         <a class="brand" href="#"><span class="brand-mark">⌁</span> nightwave</a>
         <nav class="menu" aria-label="Main menu">
           <button id="load-folder" class="menu-link"><span>＋</span> Load folder</button>
+          <button id="refresh-folders" class="menu-link" type="button" title="Rescan loaded music folders">↻ Refresh folders</button>
+          <button id="manage-folders" class="menu-link" type="button" title="Manage remembered music folders">Folders</button>
           <button id="add-files" class="menu-link">Add files</button>
-          <button id="clear-library" class="menu-link danger">Clear library</button>
+          <details class="library-tools"><summary aria-label="Library options" title="Library options">•••</summary><div class="library-tools-menu"><button id="clear-library" type="button">Clear library…</button></div></details>
           <input id="file-input" type="file" accept="audio/*" multiple hidden />
           <input id="folder-input" type="file" accept="audio/*" webkitdirectory directory multiple hidden />
         </nav>
         <div class="top-actions"><button id="show-playing" class="show-playing" type="button" aria-label="Show currently playing song" title="Show currently playing song" disabled><span aria-hidden="true">♫</span><span>Now playing</span></button><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Filter this page" aria-label="Filter current songs" /></label></div>
+        <div class="window-controls" aria-label="Window controls"><button id="window-minimize" type="button" aria-label="Minimize window" title="Minimize">—</button><button id="window-maximize" type="button" aria-label="Maximize window" title="Maximize">□</button><button id="window-close" class="window-close" type="button" aria-label="Close window" title="Close">×</button></div>
       </header>
 
       <aside class="sidebar">
@@ -28,7 +31,7 @@
         <button class="nav-item active" data-view="all"><span class="nav-icon">♫</span><span>All music</span><span id="track-count" class="count">0</span></button>
         <div class="section-heading"><span>PLAYLISTS</span><button id="new-playlist" aria-label="Create playlist">＋</button></div>
         <div id="playlist-list" class="playlist-list"></div>
-        <div class="sidebar-foot"><button id="load-folder-side" class="outline-button">＋ Add a music folder</button><p>Files and playlists are saved on this device.</p></div>
+        <div class="sidebar-foot"><p>Files and playlists are saved on this device.</p></div>
         <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize playlist sidebar" aria-orientation="vertical"></div>
       </aside>
 
