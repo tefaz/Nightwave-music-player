@@ -31,7 +31,7 @@ npm start
 
 1. Choose **Add a music folder** and select the folder containing your music.
 2. Create a playlist with the **+** button in the sidebar.
-3. Drag songs from **All music** onto a playlist, or use the song options menu.
+3. Drag songs from **All music** or one playlist onto another playlist, or use the song options menu. Dragging adds the songs to the destination playlist and keeps them in the original one.
 4. Drag playlist rows in the sidebar to arrange them in the order you prefer.
 5. Double-click a song to play it.
 
