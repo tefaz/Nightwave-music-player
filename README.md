@@ -27,6 +27,23 @@ npm install
 npm start
 ```
 
+## Install on Linux
+
+Download a release asset from GitHub—there is no need to install Node.js or clone this repository.
+
+- **AppImage**: works across many Linux distributions. Make the downloaded file executable, then open it:
+
+  ```bash
+  chmod +x Nightwave-*.AppImage
+  ./Nightwave-*.AppImage
+  ```
+
+- **Debian/Ubuntu package**: install the downloaded `.deb` file with:
+
+  ```bash
+  sudo apt install ./nightwave-music-player_*.deb
+  ```
+
 ## Using Nightwave
 
 1. Choose **Add a music folder** and select the folder containing your music.

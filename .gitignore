@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .agents/
 .codex/
 .nightwave-git/

@@ -2,14 +2,34 @@
   "name": "nightwave-music-player",
   "version": "1.0.0",
   "description": "A desktop music player for local collections",
+  "author": "Mads Nørgaard <madds.noergaard@gmail.com>",
+  "desktopName": "nightwave-music-player",
+  "repository": "git+ssh://git@github.com/tefaz/Nightwave-music-player.git",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist:linux": "electron-builder --linux AppImage deb"
+  },
+  "build": {
+    "appId": "com.tefaz.nightwave",
+    "productName": "Nightwave",
+    "linux": {
+      "category": "AudioVideo;Audio;Player",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/nightwave-icon.png"
+    }
   },
   "private": true,
   "dependencies": {
-    "electron": "^44.4.3",
     "music-metadata": "^11.15.0",
     "node-id3": "^0.2.9"
+  },
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.0.12"
   }
 }
