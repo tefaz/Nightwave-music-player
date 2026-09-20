@@ -11,6 +11,7 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Search and sort the music library
 - Create, rename, delete, and reorder playlists
 - Drag songs into playlists
+- Drag a locally loaded song directly onto another desktop app to open its source file there
 - Keep playlist memberships when songs are unloaded and loaded again
 - Edit title, artist, and album tags in MP3 files
 - Show a song in the system file manager

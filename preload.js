@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   refreshMusicFolders: directories => ipcRenderer.invoke('music:refresh-folders', directories),
   readTrack: filePath => ipcRenderer.invoke('music:read-track', filePath),
   showInFolder: filePath => ipcRenderer.invoke('music:show-in-folder', filePath),
+  startExternalDrag: filePath => ipcRenderer.send('music:start-external-drag', filePath),
   fileUrl: filePath => ipcRenderer.invoke('music:file-url', filePath),
   writeTags: values => ipcRenderer.invoke('music:write-tags', values),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),

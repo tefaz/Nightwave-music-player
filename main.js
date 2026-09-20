@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
@@ -6,6 +6,7 @@ const { spawn } = require('node:child_process');
 const NodeID3 = require('node-id3');
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac', '.opus']);
+const externalDragIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'nightwave-icon.png')).resize({ width: 64, height: 64 });
 const KIO_PHONE_MUSIC_URI = 'mtp:/Redmi Note 11/Internal shared storage/Music/';
 const isTemporaryTag = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value || '').trim());
 function preferredTag(metadata, commonValue, ids) { if (!isTemporaryTag(commonValue)) return commonValue; for (const tags of Object.values(metadata.native)) { const tag = tags.find(item => ids.includes(item.id) && item.value && !isTemporaryTag(item.value)); if (tag) return String(tag.value); } return commonValue; }
@@ -28,6 +29,7 @@ ipcMain.handle('music:pick-folder', async () => { const result = await dialog.sh
 ipcMain.handle('music:refresh-folders', async (_event, directories) => readMusicFolders(Array.isArray(directories)?directories.filter(directory=>typeof directory==='string'&&directory):[]));
 ipcMain.handle('music:read-track', (_event, filePath) => readTrack(filePath));
 ipcMain.handle('music:show-in-folder', (_event, filePath) => { shell.showItemInFolder(filePath); });
+ipcMain.on('music:start-external-drag', (event, filePath) => { if(typeof filePath!=='string'||!path.isAbsolute(filePath)||!AUDIO_EXTENSIONS.has(path.extname(filePath).toLowerCase()))return;event.sender.startDrag({file:filePath,icon:externalDragIcon}); });
 ipcMain.handle('music:file-url', (_event, filePath) => pathToFileURL(filePath).href);
 ipcMain.handle('music:sync-to-phone', async (event, request) => { const filePaths=request?.filePaths,playlistName=String(request?.playlistName||'Nightwave').trim()||'Nightwave';if(!Array.isArray(filePaths)||!filePaths.length)throw new Error('There are no local music files to sync.');const onProgress=(completed,filePath)=>event.sender.send('music:sync-progress',{completed,total:filePaths.length,fileName:path.basename(filePath)});try{return await syncWithGio(filePaths,await phoneMusicUri(playlistName),onProgress)}catch(error){if(!String(error.message).includes('No MTP phone is mounted'))throw error;return syncWithKio(filePaths,playlistName,onProgress)} });
 ipcMain.handle('music:write-tags', async (_event, { filePath, title, artist, album }) => { if (path.extname(filePath).toLowerCase() !== '.mp3') throw new Error('Editing tags is currently supported for MP3 files only.'); const ok = NodeID3.update({ title, artist, album }, filePath); if (!ok) throw new Error('Could not write tags to this file.'); return readTrack(filePath); });

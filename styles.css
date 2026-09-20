@@ -100,6 +100,13 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 .folder-list button { flex:0 0 auto; padding:6px 8px; color:#f7c2ba; font-size:11px; }
 .folder-list button:hover { color:#fff; background:rgba(239,68,68,.2); }
 
+/* The arrow starts a native OS file drag; the rest of the row remains a playlist drag. */
+.track-header,.track-row { grid-template-columns:minmax(180px,1.7fr) minmax(130px,1fr) minmax(120px,1fr) 64px 54px; }
+.track-actions { display:flex; justify-content:flex-end; gap:2px; }
+.external-drag,.row-menu { width:25px; height:25px; color:#b9a78d; border-radius:4px; }
+.external-drag { cursor:grab; font-size:16px; }
+.external-drag:hover { cursor:grabbing; color:#fff7df; background:rgba(251,146,60,.18); }
+
 /* Keep the open playlist unmistakable, even when the pointer is elsewhere. */
 .playlist-item.selected { color:#fff7df; background:linear-gradient(90deg,rgba(251,191,36,.26),rgba(249,115,22,.19)); box-shadow:inset 3px 0 #fbbf24, inset 0 0 0 1px rgba(251,191,36,.22); }
 .playlist-item.selected .playlist-select { font-weight:700; }
