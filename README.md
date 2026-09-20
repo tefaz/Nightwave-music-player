@@ -18,18 +18,18 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Sync a playlist to an MTP-connected phone on Linux with GIO or KDE KIO
 - Store library and playlist data locally on the device
 
-## Run locally
+## Run from source (for development)
 
-Install [Node.js](https://nodejs.org/) and npm, then run:
+Use these instructions only if you have cloned this repository and want to run or develop Nightwave from its source code. Install [Node.js](https://nodejs.org/) and npm, then run:
 
 ```bash
 npm install
 npm start
 ```
 
-## Install on Linux
+## Install on Linux (no source code required)
 
-Download a release asset from GitHub—there is no need to install Node.js or clone this repository.
+For normal use, skip the **Run from source** section. Download a release asset from GitHub instead—there is no need to install Node.js, clone this repository, or run any source code.
 
 - **AppImage**: works across many Linux distributions. Make the downloaded file executable, then open it:
 
