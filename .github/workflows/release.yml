@@ -30,7 +30,7 @@ jobs:
       - name: Build Linux packages
         run: |
           for attempt in 1 2 3; do
-            if npm run dist:linux > build.log 2>&1; then
+            if npm run dist:linux -- --publish never > build.log 2>&1; then
               cat build.log
               exit 0
             fi
