@@ -1,7 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
+let scanSequence = 0;
+function scan(channel, args, onProgress) {
+  const requestId = ++scanSequence;
+  const listener = (_event, progress) => { if (progress.requestId === requestId) onProgress?.(progress); };
+  ipcRenderer.on('music:scan-progress', listener);
+  return ipcRenderer.invoke(channel, ...args, requestId).finally(() => ipcRenderer.removeListener('music:scan-progress', listener));
+}
 contextBridge.exposeInMainWorld('electronAPI', {
-  pickMusicFolder: () => ipcRenderer.invoke('music:pick-folder'),
-  refreshMusicFolders: directories => ipcRenderer.invoke('music:refresh-folders', directories),
+  pickMusicFolder: onProgress => scan('music:pick-folder', [], onProgress),
+  refreshMusicFolders: (directories, onProgress) => scan('music:refresh-folders', [directories], onProgress),
   readTrack: filePath => ipcRenderer.invoke('music:read-track', filePath),
   showInFolder: filePath => ipcRenderer.invoke('music:show-in-folder', filePath),
   startExternalDrag: filePath => ipcRenderer.send('music:start-external-drag', filePath),

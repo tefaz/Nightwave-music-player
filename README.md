@@ -51,13 +51,17 @@ For normal use, skip the **Run from source** section. Download a release asset f
 2. Create a playlist with the **+** button in the sidebar.
 3. Drag songs from **All music** or one playlist onto another playlist, or use the song options menu. Dragging adds the songs to the destination playlist and keeps them in the original one.
 4. Drag playlist rows in the sidebar to arrange them in the order you prefer.
-5. Double-click a song to play it.
+5. Double-click a song quickly to play it. To edit a title, artist, or album in an MP3 song row, click the same field twice more slowly: clicks up to 300 ms apart play; clicks more than 300 ms and up to 900 ms apart open an inline editor. Press Enter or click ✓ to save directly to the source MP3; press Escape or click × to cancel. Switching to a view that hides the row cancels an unsaved edit. Ctrl/Cmd-click and Shift-click remain selection gestures.
+
+Playback keeps the queue you started, even when you filter, sort, or browse another playlist. Shuffle plays each queued song once per cycle, and Previous retraces that order. Folder scans show progress, retain readable songs when a subfolder is unavailable, and reuse metadata for files that have not changed during the current session.
 
 Your library and playlists are saved locally with the app. If you clear or unload the library, playlist assignments are retained and return when the same files are loaded again.
 
 ## Phone sync
 
-Phone sync is designed for Linux desktop environments with an MTP-capable file manager integration. Connect and unlock your phone, select **File transfer**, open a playlist, and choose **Sync to phone**. Nightwave copies the playlist into a matching folder under the phone's `Music` directory and skips files that are already present.
+Phone sync is designed for Linux desktop environments with an MTP-capable file manager integration. Connect and unlock your phone, select **File transfer**, open a playlist, and choose **Sync to phone**. Nightwave copies the playlist into a matching folder under the phone's `Music` directory. Destination filenames include a short content fingerprint, so different songs with the same filename can coexist and changed source files get distinct copies. Existing copies are checked before they are skipped, and incomplete copies are retried.
+
+Sync remains additive: it does not delete music from your phone. Files copied by older Nightwave versions keep their original names and may coexist with the new copies on the first sync after upgrading.
 
 For KDE systems, Nightwave can fall back to `kioclient5` when GIO cannot access the connected phone.
 
@@ -68,16 +72,23 @@ For KDE systems, Nightwave can fall back to `kioclient5` when GIO cannot access 
 | `app.js` | Renderer UI, playback, library, playlist, and local storage logic |
 | `main.js` | Electron main process, music-folder scanning, metadata, and phone sync |
 | `preload.js` | Secure renderer-to-main-process API bridge |
+| `renderer-core.js` | Transaction handling, playback queues, text escaping, and click timing |
+| `music-library.js` | Bounded scanning and metadata caching |
+| `phone-sync.js` | File fingerprints and verified phone transfers |
+| `tag-worker.js` | Tag writes outside the Electron main thread |
 | `index.html` and `styles.css` | Application interface and visual styling |
 | `assets/` | App icon and visual assets |
 | `vendor/` | Browser-side metadata parsing dependency |
 
 ## Development
 
-The project currently has no automated test suite. Before committing JavaScript changes, run:
+Run the regression suite and JavaScript syntax checks before committing changes:
 
 ```bash
+npm test
 node --check app.js
 node --check main.js
 node --check preload.js
 ```
+
+`npm run test:electron` runs isolated desktop checks with temporary app storage, including actual IndexedDB rollback, metadata quoting, playback, and the preload bridge. This headless test command disables Chromium's OS sandbox for constrained test environments; normal `npm start` does not. Phone transfers use mocked backends in the regression suite and still need verification with a connected device.

@@ -8,6 +8,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node tests/regressions.test.js",
+    "test:electron": "electron --no-sandbox --ozone-platform=headless --disable-gpu tests/electron-smoke.cjs",
     "dist:linux": "electron-builder --linux AppImage deb"
   },
   "build": {

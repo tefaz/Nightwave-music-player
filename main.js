@@ -1,47 +1,202 @@
 const { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeImage, net, shell } = require('electron');
 const path = require('node:path');
-const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { spawn } = require('node:child_process');
-const NodeID3 = require('node-id3');
+const { createHash } = require('node:crypto');
+const { Worker } = require('node:worker_threads');
+const { absolutePath, audioFile, createLibrary } = require('./music-library');
+const { createPhoneSync, playlistFolder } = require('./phone-sync');
 
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac', '.opus']);
-const externalDragIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'nightwave-icon.png')).resize({ width: 64, height: 64 });
-const KIO_PHONE_MUSIC_URI = 'mtp:/Redmi Note 11/Internal shared storage/Music/';
-const isTemporaryTag = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value || '').trim());
+const library = createLibrary();
 const lyricsCache = new Map();
-function preferredTag(metadata, commonValue, ids) { if (!isTemporaryTag(commonValue)) return commonValue; for (const tags of Object.values(metadata.native)) { const tag = tags.find(item => ids.includes(item.id) && item.value && !isTemporaryTag(item.value)); if (tag) return String(tag.value); } return commonValue; }
+const pageUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
+const tagWrites = new Map();
 let mainWindow;
-function createWindow() { const window = new BrowserWindow({ width: 1800, height: 980, minWidth: 900, minHeight: 620, frame: false, backgroundColor: '#0d0d0f', icon: path.join(__dirname, 'assets', 'nightwave-icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false } }); mainWindow=window; window.on('closed',()=>{if(mainWindow===window)mainWindow=null}); window.on('maximize',()=>window.webContents.send('window:maximized',true)); window.on('unmaximize',()=>window.webContents.send('window:maximized',false)); window.loadFile('index.html'); }
-function sendPlaybackCommand(command) { if (!mainWindow || mainWindow.isDestroyed()) return; mainWindow.webContents.send('playback:command', command); }
-function registerMediaShortcuts() { for (const [accelerator, command] of [['MediaPlayPause', 'toggle'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'previous']]) { if (!globalShortcut.register(accelerator, () => sendPlaybackCommand(command))) console.warn(`Could not register global media shortcut: ${accelerator}`); } }
+let syncing = false;
+
+function validateSender(event) {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
+      event.senderFrame !== mainWindow.webContents.mainFrame || event.senderFrame?.url.split('#')[0] !== pageUrl) {
+    throw new Error('This request must come from the Nightwave window.');
+  }
+}
+
+function handle(channel, callback) {
+  ipcMain.handle(channel, (event, ...args) => {
+    validateSender(event);
+    return callback(event, ...args);
+  });
+}
+
+function createWindow() {
+  const window = new BrowserWindow({
+    width: 1800, height: 980, minWidth: 900, minHeight: 620, frame: false,
+    backgroundColor: '#0d0d0f', icon: path.join(__dirname, 'assets', 'nightwave-icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  mainWindow = window;
+  window.webContents.on('will-navigate', event => event.preventDefault());
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.on('closed', () => { if (mainWindow === window) mainWindow = null; });
+  window.on('maximize', () => window.webContents.send('window:maximized', true));
+  window.on('unmaximize', () => window.webContents.send('window:maximized', false));
+  window.loadFile(path.join(__dirname, 'index.html'));
+}
+
+function registerMediaShortcuts() {
+  for (const [accelerator, command] of [['MediaPlayPause', 'toggle'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'previous']]) {
+    if (!globalShortcut.register(accelerator, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('playback:command', command);
+    })) console.warn(`Could not register global media shortcut: ${accelerator}`);
+  }
+}
+
 const normalizeLyricsValue = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const removeLyricsTimestamps = lyrics => String(lyrics || '').replace(/^\[[\d:.]+\]\s?/gm, '').trim();
-async function findLyrics({ title, artist, album, duration }={}) { const trackName=String(title||'').trim(),artistName=String(artist||'').trim();if(!trackName)return {status:'not-found'};const cacheKey=[trackName,artistName,album,duration].join('\0');if(lyricsCache.has(cacheKey))return lyricsCache.get(cacheKey);const query=new URLSearchParams({track_name:trackName});if(artistName&&artistName!=='Unknown artist')query.set('artist_name',artistName);if(album&&album!=='Local files')query.set('album_name',String(album));try{const response=await net.fetch(`https://lrclib.net/api/search?${query}`,{headers:{'Lrclib-Client':'Nightwave/1.0.1 (https://github.com/tefaz/Nightwave-music-player)'}});if(!response.ok)throw new Error(`Lyrics service returned ${response.status}`);const matches=await response.json(),wantedTitle=normalizeLyricsValue(trackName),wantedArtist=normalizeLyricsValue(artistName);const match=(Array.isArray(matches)?matches:[]).filter(item=>(item.plainLyrics||item.syncedLyrics)&&!item.instrumental).sort((a,b)=>{const score=item=>(normalizeLyricsValue(item.trackName)===wantedTitle?8:0)+(wantedArtist&&normalizeLyricsValue(item.artistName)===wantedArtist?6:0)+(Number.isFinite(duration)&&Math.abs(Number(item.duration)-Number(duration))<=3?2:0);return score(b)-score(a)})[0];const result=match?{status:'found',lyrics:match.plainLyrics||removeLyricsTimestamps(match.syncedLyrics),title:match.trackName,artist:match.artistName}:{status:'not-found'};lyricsCache.set(cacheKey,result);return result}catch(error){console.warn('Lyrics lookup failed:',error.message);return {status:'error'};}}
-function runCommand(command,args) { return new Promise((resolve, reject) => { const child=spawn(command,args), output=[]; child.stdout.on('data',chunk=>output.push(chunk)); child.stderr.on('data',chunk=>output.push(chunk)); child.on('error',reject); child.on('close',code=>code===0?resolve(Buffer.concat(output).toString()):reject(new Error(Buffer.concat(output).toString().trim()||`${command} exited with code ${code}`))); }); }
-const runGio = args => runCommand('gio',args);
-const playlistFolder = playlistName => encodeURIComponent(playlistName);
-const kioPlaylistUri = playlistName => `${KIO_PHONE_MUSIC_URI}${playlistFolder(playlistName)}`;
-const kioPlaylistDirectoryUri = playlistName => `${kioPlaylistUri(playlistName)}/`;
-const kioFileUri = (filePath,playlistName) => `${kioPlaylistDirectoryUri(playlistName)}${encodeURIComponent(path.basename(filePath))}`;
-async function phoneMusicUri(playlistName) { const mounts=await runGio(['mount','-li']); const roots=[...mounts.matchAll(/mtp:\/\/[^\s]+/g)].map(match=>match[0]); if(!roots.length)throw new Error('No MTP phone is mounted. Unlock your phone, choose File transfer, then try again.'); const root=roots.find(uri=>mounts.slice(Math.max(0,mounts.indexOf(uri)-300),mounts.indexOf(uri)+300).includes('Redmi Note 11'))||roots[0]; return `${root.replace(/\/?$/,'/')}Internal%20shared%20storage/Music/${playlistFolder(playlistName)}/`; }
-async function syncWithGio(filePaths,musicUri,onProgress) { await runGio(['mkdir','-p',musicUri]); let copied=0,skipped=0;const failed=[]; for(const [index,filePath] of filePaths.entries()){onProgress(index,filePath);const destination=`${musicUri}${encodeURIComponent(path.basename(filePath))}`;try{await runGio(['info',destination]);skipped++;continue}catch{}try{await runGio(['copy','--no-target-directory',filePath,destination]);copied++}catch(error){failed.push(`${path.basename(filePath)}: ${error.message}`)}}return {copied,skipped,failed}; }
-async function syncWithKio(filePaths,playlistName,onProgress) { const options=['--platform','offscreen','--noninteractive'],folder=kioPlaylistUri(playlistName),target=kioPlaylistDirectoryUri(playlistName);try{await runCommand('kioclient5',[...options,'stat',folder])}catch{await runCommand('kioclient5',[...options,'mkdir',folder])}let copied=0,skipped=0;const failed=[]; for(const [index,filePath] of filePaths.entries()){onProgress(index,filePath);const destination=kioFileUri(filePath,playlistName);try{await runCommand('kioclient5',[...options,'stat',destination]);skipped++;continue}catch{}try{await runCommand('kioclient5',[...options,'copy',filePath,target]);copied++}catch(error){failed.push(`${path.basename(filePath)}: ${error.message}`)}}if(!copied&&failed.length===filePaths.length)throw new Error(`KDE could not access the connected phone at ${target}. ${failed[0]}`);return {copied,skipped,failed}; }
-async function musicFiles(directory) { const entries = await fs.readdir(directory, { withFileTypes: true }); const nested = await Promise.all(entries.map(async entry => { const target = path.join(directory, entry.name); if (entry.isDirectory()) return musicFiles(target); return AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) ? [target] : []; })); return nested.flat(); }
-async function readMusicFolders(directories) { const results=await Promise.all(directories.map(async directory=>{try{return {directory,tracks:await Promise.all((await musicFiles(directory)).map(readTrack))}}catch{return {directory,tracks:null}}})); return { tracks:[...new Map(results.flatMap(result=>result.tracks||[]).map(track=>[track.path,track])).values()], unavailableFolders:results.filter(result=>result.tracks===null).map(result=>result.directory) }; }
-async function readTrack(filePath) { const fallback = path.basename(filePath, path.extname(filePath)); try { const { parseFile } = await import('music-metadata'); const metadata = await parseFile(filePath, { duration: true, skipCovers: true }); return { path: filePath, key: filePath, title: preferredTag(metadata, metadata.common.title, ['TIT2', 'TT2', 'title']) || fallback, artist: preferredTag(metadata, metadata.common.artist, ['TPE1', 'TP1', 'artist']) || 'Unknown artist', album: preferredTag(metadata, metadata.common.album, ['TALB', 'TAL', 'album']) || 'Local files', duration: metadata.format.duration || 0 }; } catch { return { path: filePath, key: filePath, title: fallback, artist: 'Unknown artist', album: 'Local files', duration: 0 }; } }
-app.whenReady().then(() => { createWindow(); registerMediaShortcuts(); app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); });
+async function findLyrics({ title, artist, album, duration } = {}) {
+  const trackName = String(title || '').trim(), artistName = String(artist || '').trim();
+  if (!trackName) return { status: 'not-found' };
+  const cacheKey = [trackName, artistName, album, duration].join('\0');
+  if (lyricsCache.has(cacheKey)) return lyricsCache.get(cacheKey);
+  const query = new URLSearchParams({ track_name: trackName });
+  if (artistName && artistName !== 'Unknown artist') query.set('artist_name', artistName);
+  if (album && album !== 'Local files') query.set('album_name', String(album));
+  try {
+    const response = await net.fetch(`https://lrclib.net/api/search?${query}`, {
+      headers: { 'Lrclib-Client': `Nightwave/${app.getVersion()} (https://github.com/tefaz/Nightwave-music-player)` },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) throw new Error(`Lyrics service returned ${response.status}`);
+    const matches = await response.json(), wantedTitle = normalizeLyricsValue(trackName), wantedArtist = normalizeLyricsValue(artistName);
+    const score = item => (normalizeLyricsValue(item.trackName) === wantedTitle ? 8 : 0) +
+      (wantedArtist && normalizeLyricsValue(item.artistName) === wantedArtist ? 6 : 0) +
+      (Number.isFinite(duration) && Math.abs(Number(item.duration) - duration) <= 3 ? 2 : 0);
+    const match = (Array.isArray(matches) ? matches : []).filter(item => (item.plainLyrics || item.syncedLyrics) && !item.instrumental).sort((a, b) => score(b) - score(a))[0];
+    const result = match ? { status: 'found', lyrics: match.plainLyrics || removeLyricsTimestamps(match.syncedLyrics), title: match.trackName, artist: match.artistName } : { status: 'not-found' };
+    lyricsCache.set(cacheKey, result);
+    if (lyricsCache.size > 500) lyricsCache.delete(lyricsCache.keys().next().value);
+    return result;
+  } catch (error) {
+    console.warn('Lyrics lookup failed:', error.message);
+    return { status: 'error' };
+  }
+}
+
+function runCommand(command, args, { hash = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env: { ...process.env, LC_ALL: 'C' } });
+    const output = [], errors = [], digest = hash ? createHash('sha256') : null;
+    let outputSize = 0, errorSize = 0;
+    const timeout = setTimeout(() => { child.kill(); reject(new Error(`${command} timed out.`)); }, 300000);
+    child.stdout.on('data', chunk => {
+      if (digest) digest.update(chunk);
+      else if ((outputSize += chunk.length) <= 1024 * 1024) output.push(chunk);
+    });
+    child.stderr.on('data', chunk => { if ((errorSize += chunk.length) <= 65536) errors.push(chunk); });
+    child.on('error', error => { clearTimeout(timeout); reject(error); });
+    child.on('close', code => {
+      clearTimeout(timeout);
+      if (code === 0) resolve(digest ? digest.digest('hex') : Buffer.concat(output).toString());
+      else reject(new Error(Buffer.concat(errors).toString().trim() || `${command} exited with code ${code}`));
+    });
+  });
+}
+const phoneSync = createPhoneSync({ runCommand });
+
+function scanProgress(event, requestId) {
+  let lastUpdate = 0;
+  return progress => {
+    const now = Date.now();
+    if (now - lastUpdate < 100 && !(progress.phase === 'metadata' && progress.completed === progress.total)) return;
+    lastUpdate = now;
+    if (!event.sender.isDestroyed()) event.sender.send('music:scan-progress', { requestId, ...progress });
+  };
+}
+
+function writeTags(filePath, tags) {
+  // node-id3's callback API still reads synchronously. Keep all its work off the main thread.
+  const previous = tagWrites.get(filePath) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(() => new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'tag-worker.js'), { workerData: { filePath, tags } });
+    let answered = false;
+    worker.once('message', result => {
+      answered = true;
+      result.ok ? resolve() : reject(new Error(result.message || 'Could not write tags.'));
+    });
+    worker.once('error', reject);
+    worker.once('exit', code => { if (!answered) reject(new Error(`Tag writer exited before completing (${code}).`)); });
+  }));
+  tagWrites.set(filePath, operation);
+  return operation.finally(() => { if (tagWrites.get(filePath) === operation) tagWrites.delete(filePath); });
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  registerMediaShortcuts();
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
-ipcMain.handle('music:pick-folder', async () => { const result = await dialog.showOpenDialog({ properties: ['openDirectory'] }); if (result.canceled) return null; const directory=result.filePaths[0],library=await readMusicFolders([directory]); return { directory, tracks:library.tracks }; });
-ipcMain.handle('music:refresh-folders', async (_event, directories) => readMusicFolders(Array.isArray(directories)?directories.filter(directory=>typeof directory==='string'&&directory):[]));
-ipcMain.handle('music:read-track', (_event, filePath) => readTrack(filePath));
-ipcMain.handle('music:show-in-folder', (_event, filePath) => { shell.showItemInFolder(filePath); });
-ipcMain.on('music:start-external-drag', (event, filePath) => { if(typeof filePath!=='string'||!path.isAbsolute(filePath)||!AUDIO_EXTENSIONS.has(path.extname(filePath).toLowerCase()))return;event.sender.startDrag({file:filePath,icon:externalDragIcon}); });
-ipcMain.handle('music:file-url', (_event, filePath) => pathToFileURL(filePath).href);
-ipcMain.handle('music:find-lyrics', (_event, track) => findLyrics(track));
-ipcMain.handle('music:sync-to-phone', async (event, request) => { const filePaths=request?.filePaths,playlistName=String(request?.playlistName||'Nightwave').trim()||'Nightwave';if(!Array.isArray(filePaths)||!filePaths.length)throw new Error('There are no local music files to sync.');const onProgress=(completed,filePath)=>event.sender.send('music:sync-progress',{completed,total:filePaths.length,fileName:path.basename(filePath)});try{return await syncWithGio(filePaths,await phoneMusicUri(playlistName),onProgress)}catch(error){if(!String(error.message).includes('No MTP phone is mounted'))throw error;return syncWithKio(filePaths,playlistName,onProgress)} });
-ipcMain.handle('music:write-tags', async (_event, { filePath, title, artist, album }) => { if (path.extname(filePath).toLowerCase() !== '.mp3') throw new Error('Editing tags is currently supported for MP3 files only.'); const ok = NodeID3.update({ title, artist, album }, filePath); if (!ok) throw new Error('Could not write tags to this file.'); return readTrack(filePath); });
-ipcMain.handle('window:minimize', event => BrowserWindow.fromWebContents(event.sender)?.minimize());
-ipcMain.handle('window:toggle-maximize', event => { const window=BrowserWindow.fromWebContents(event.sender); if (!window) return false; window.isMaximized() ? window.unmaximize() : window.maximize(); return window.isMaximized(); });
-ipcMain.handle('window:close', event => BrowserWindow.fromWebContents(event.sender)?.close());
+
+handle('music:pick-folder', async (event, requestId) => {
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+  if (result.canceled) return null;
+  const directory = absolutePath(result.filePaths[0]);
+  return { directory, ...await library.readMusicFolders([directory], scanProgress(event, requestId)) };
+});
+handle('music:refresh-folders', async (event, directories, requestId) => {
+  if (!Array.isArray(directories) || directories.length > 1000) throw new Error('Invalid music folder list.');
+  return library.readMusicFolders(directories.map(absolutePath), scanProgress(event, requestId));
+});
+handle('music:read-track', async (_event, filePath) => library.readTrack(await audioFile(filePath)));
+handle('music:show-in-folder', async (_event, filePath) => shell.showItemInFolder(await audioFile(filePath)));
+ipcMain.on('music:start-external-drag', async (event, filePath) => {
+  try {
+    validateSender(event);
+    const validated = await audioFile(filePath);
+    if (!event.sender.isDestroyed()) event.sender.startDrag({
+      file: validated,
+      icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'nightwave-icon.png')).resize({ width: 64, height: 64 })
+    });
+  } catch (error) { console.warn('External drag failed:', error.message); }
+});
+handle('music:file-url', async (_event, filePath) => pathToFileURL(await audioFile(filePath)).href);
+handle('music:find-lyrics', (_event, track) => {
+  if (!track || typeof track !== 'object' || [track.title, track.artist, track.album].some(value => value != null && (typeof value !== 'string' || value.length > 2000))) {
+    throw new Error('Invalid lyrics request.');
+  }
+  return findLyrics(track);
+});
+handle('music:sync-to-phone', async (event, request) => {
+  if (syncing) throw new Error('A phone sync is already running.');
+  if (!Array.isArray(request?.filePaths) || !request.filePaths.length || request.filePaths.length > 100000) throw new Error('There are no valid local music files to sync.');
+  playlistFolder(request.playlistName);
+  syncing = true;
+  try {
+    const filePaths = [];
+    for (const filePath of new Set(request.filePaths)) filePaths.push(await audioFile(filePath));
+    const onProgress = (completed, filePath) => {
+      if (!event.sender.isDestroyed()) event.sender.send('music:sync-progress', { completed, total: filePaths.length, fileName: path.basename(filePath) });
+    };
+    return await phoneSync.sync(filePaths, request.playlistName, onProgress);
+  } finally { syncing = false; }
+});
+handle('music:write-tags', async (_event, values) => {
+  const filePath = await audioFile(values?.filePath);
+  if (path.extname(filePath).toLowerCase() !== '.mp3') throw new Error('Editing tags is currently supported for MP3 files only.');
+  const tags = {};
+  for (const field of ['title', 'artist', 'album']) {
+    if (typeof values[field] !== 'string' || values[field].length > 10000 || values[field].includes('\0')) throw new Error(`Invalid ${field} tag.`);
+    tags[field] = values[field];
+  }
+  await writeTags(filePath, tags);
+  library.invalidate(filePath);
+  return library.readTrack(filePath);
+});
+handle('window:minimize', event => BrowserWindow.fromWebContents(event.sender)?.minimize());
+handle('window:toggle-maximize', event => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  window.isMaximized() ? window.unmaximize() : window.maximize();
+  return window.isMaximized();
+});
+handle('window:close', event => BrowserWindow.fromWebContents(event.sender)?.close());
