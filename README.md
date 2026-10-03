@@ -2,7 +2,7 @@
 
 Nightwave is a local desktop music player built with Electron. It lets you load a music folder, organize songs into playlists, and play your collection without uploading your library to a streaming service.
 
-![Nightwave showing a playlist, active playback controls, and phone sync progress](https://raw.githubusercontent.com/tefaz/Nightwave-music-player/362bf66fb2095032b4b50353febcbc37350786f1/Nightwave.png)
+![Nightwave showing the music library, playlists, Files and View menus, and playback controls](Nightwave.png)
 
 ## Features
 
@@ -18,6 +18,7 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Show a song in the system file manager
 - Shuffle, repeat, seek, and control volume
 - View a live sunset-colored audio spectrum in the sidebar
+- Switch the main panels to Space tunnel, Aurora, or Kaleidoscope visualizers while keeping playback controls visible
 - Sync a playlist to an MTP-connected phone on Linux with GIO or KDE KIO
 - Store library and playlist data locally on the device
 
