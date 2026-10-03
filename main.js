@@ -6,8 +6,28 @@ const { createHash } = require('node:crypto');
 const { Worker } = require('node:worker_threads');
 const { absolutePath, audioFile, createLibrary } = require('./music-library');
 const { createPhoneSync, playlistFolder } = require('./phone-sync');
+const { createArtworkSearch } = require('./artwork-search');
 
-const library = createLibrary();
+const library = createLibrary({ createThumbnail: picture => {
+  if (!picture.data?.length || picture.data.length > 10 * 1024 * 1024) return null;
+  const image = nativeImage.createFromBuffer(Buffer.from(picture.data));
+  if (image.isEmpty()) return null;
+  const { width, height } = image.getSize();
+  const resized = Math.max(width, height) > 128
+    ? image.resize(width >= height ? { width: 128 } : { height: 128 }) : image;
+  return `data:image/png;base64,${resized.toPNG().toString('base64')}`;
+} });
+const artworkSearch = createArtworkSearch({
+  fetch: (url, options) => net.fetch(url, options),
+  userAgent: `Nightwave/${app.getVersion()} (https://github.com/tefaz/Nightwave-music-player)`,
+  prepareCover: buffer => {
+    const image = nativeImage.createFromBuffer(buffer);
+    if (image.isEmpty()) return null;
+    const { width, height } = image.getSize();
+    const cover = Math.max(width, height) > 500 ? image.resize(width >= height ? { width: 500 } : { height: 500 }) : image;
+    return { buffer: cover.toJPEG(90), preview: cover.toDataURL() };
+  }
+});
 const lyricsCache = new Map();
 const pageUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const tagWrites = new Map();
@@ -190,6 +210,20 @@ handle('music:write-tags', async (_event, values) => {
     tags[field] = values[field];
   }
   await writeTags(filePath, tags);
+  library.invalidate(filePath);
+  return library.readTrack(filePath);
+});
+handle('music:search-artwork', async (_event, request) => {
+  const filePath = await audioFile(request?.filePath);
+  if (path.extname(filePath).toLowerCase() !== '.mp3') throw new Error('Saving album covers is currently supported for MP3 files only.');
+  return artworkSearch.search({ filePath, title: request.title, artist: request.artist, album: request.album });
+});
+handle('music:save-artwork', async (_event, request) => {
+  const filePath = await audioFile(request?.filePath);
+  if (path.extname(filePath).toLowerCase() !== '.mp3') throw new Error('Saving album covers is currently supported for MP3 files only.');
+  const imageBuffer = artworkSearch.selectedCover(filePath, request.token);
+  await writeTags(filePath, { image: { mime: 'image/jpeg', type: { id: 3, name: 'front cover' }, description: 'Front cover', imageBuffer } });
+  artworkSearch.discard(request.token);
   library.invalidate(filePath);
   return library.readTrack(filePath);
 });

@@ -30,7 +30,7 @@ function preferredTag(metadata, commonValue, ids) {
   return commonValue;
 }
 
-function createLibrary({ fileSystem = fs, parseFile = async (...args) => (await import('music-metadata')).parseFile(...args), concurrency = 4, cacheLimit = 20000 } = {}) {
+function createLibrary({ fileSystem = fs, parseFile = async (...args) => (await import('music-metadata')).parseFile(...args), concurrency = 4, cacheLimit = 20000, createThumbnail = () => null } = {}) {
   const cache = new Map();
   // Shared limiter also bounds concurrent scans and individual read-track requests.
   let active = 0;
@@ -50,15 +50,19 @@ function createLibrary({ fileSystem = fs, parseFile = async (...args) => (await 
       const cached = cache.get(filePath);
       if (cached?.signature === signature) return { ...cached.track };
       const fallback = path.basename(filePath, path.extname(filePath));
-      let track = { path: filePath, key: filePath, title: fallback, artist: 'Unknown artist', album: 'Local files', duration: 0 };
+      let track = { path: filePath, key: filePath, title: fallback, artist: 'Unknown artist', album: 'Local files', duration: 0, artwork: null };
       try {
-        const metadata = await parseFile(filePath, { duration: true, skipCovers: true });
+        const metadata = await parseFile(filePath, { duration: true, skipCovers: false });
         track = { ...track,
           title: preferredTag(metadata, metadata.common.title, ['TIT2', 'TT2', 'title']) || fallback,
           artist: preferredTag(metadata, metadata.common.artist, ['TPE1', 'TP1', 'artist']) || 'Unknown artist',
           album: preferredTag(metadata, metadata.common.album, ['TALB', 'TAL', 'album']) || 'Local files',
           duration: metadata.format.duration || 0
         };
+        const pictures = metadata.common.picture || [];
+        const picture = pictures.find(item => /front/i.test(item.type || item.name || '')) || pictures[0];
+        // A damaged cover must not discard otherwise readable song tags.
+        if (picture) { try { track.artwork = await createThumbnail(picture); } catch {} }
         cache.delete(filePath);
         cache.set(filePath, { signature, track });
         if (cache.size > cacheLimit) cache.delete(cache.keys().next().value);

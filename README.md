@@ -8,6 +8,8 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 
 - Load an entire music folder, including nested folders
 - Play MP3, M4A, WAV, OGG, FLAC, AAC, and Opus files
+- Show embedded album covers in song rows and the current-song player
+- Search for album covers from each song's menu and save a chosen cover into its MP3
 - Search and sort the music library
 - Create, rename, delete, and reorder playlists
 - Drag songs into playlists
@@ -16,6 +18,7 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Edit title, artist, and album tags in MP3 files
 - Show a song in the system file manager
 - Shuffle, repeat, seek, and control volume
+- View a live sunset-colored audio spectrum in the sidebar
 - Sync a playlist to an MTP-connected phone on Linux with GIO or KDE KIO
 - Store library and playlist data locally on the device
 
@@ -55,6 +58,8 @@ For normal use, skip the **Run from source** section. Download a release asset f
 
 Playback keeps the queue you started, even when you filter, sort, or browse another playlist. Shuffle plays each queued song once per cycle, and Previous retraces that order. Folder scans show progress, retain readable songs when a subfolder is unavailable, and reuse metadata for files that have not changed during the current session.
 
+For MP3 files loaded from a folder, open the song's three-dot menu and choose **Update thumbnail**. The app searches MusicBrainz and Cover Art Archive using the song and artist names, with matches to the existing album shown first. You can adjust the search names without changing the song's tags. Choose **Save cover** to replace the embedded front cover and update the row and player thumbnails. Searching or cancelling does not modify the file. Other embedded pictures and the song's text tags are retained. This action requires an internet connection; embedding covers in other audio formats is not supported yet.
+
 Your library and playlists are saved locally with the app. If you clear or unload the library, playlist assignments are retained and return when the same files are loaded again.
 
 ## Phone sync
@@ -74,6 +79,8 @@ For KDE systems, Nightwave can fall back to `kioclient5` when GIO cannot access 
 | `preload.js` | Secure renderer-to-main-process API bridge |
 | `renderer-core.js` | Transaction handling, playback queues, text escaping, and click timing |
 | `music-library.js` | Bounded scanning and metadata caching |
+| `artwork-search.js` | Online cover lookup, bounded downloads, and temporary cover selections |
+| `visualizer.js` | Live audio analysis and the sidebar spectrum canvas |
 | `phone-sync.js` | File fingerprints and verified phone transfers |
 | `tag-worker.js` | Tag writes outside the Electron main thread |
 | `index.html` and `styles.css` | Application interface and visual styling |

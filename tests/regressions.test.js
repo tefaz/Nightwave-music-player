@@ -8,6 +8,41 @@ const { Worker } = require('node:worker_threads');
 const { escapeHTML, writeBatch, PlaybackQueue, TrackClicks } = require('../renderer-core');
 const { createLibrary, absolutePath, audioFile } = require('../music-library');
 const { createPhoneSync, fileIdentity, playlistFolder } = require('../phone-sync');
+const { createArtworkSearch, readLimited } = require('../artwork-search');
+
+test('cover search ranks the tagged album, skips missing covers, and binds expiring selections to the file', async () => {
+  const ids = [1, 2, 3].map(number => `00000000-0000-0000-0000-${String(number).padStart(12, '0')}`);
+  let clock = 10000;
+  const requests = [];
+  const service = createArtworkSearch({ interval: 0, now: () => clock, userAgent: 'Test',
+    fetch: async url => {
+      requests.push(url);
+      if (url.includes('musicbrainz.org')) return Response.json({ recordings: [
+        { title: 'Song', score: 100, 'artist-credit': [{ artist: { name: 'Wrong artist' } }], releases: [{ id: ids[2], title: 'Wrong' }] },
+        { title: 'Song', score: 100, 'artist-credit': [{ artist: { name: 'Artist' } }], releases: [{ id: ids[0], title: 'Other' }, { id: ids[1], title: 'Album' }, { id: '../unsafe', title: 'Bad' }] }
+      ] });
+      return url.includes(ids[1]) ? new Response('', { status: 404 }) : new Response('cover');
+    },
+    prepareCover: buffer => ({ buffer, preview: 'data:image/png;base64,Y292ZXI=' })
+  });
+  const results = await service.search({ filePath: '/song.mp3', title: 'Song', artist: 'Artist', album: 'Album' });
+  assert.equal(results.length, 1);assert.equal(results[0].album, 'Other');
+  assert(requests[1].includes(ids[1]));assert.equal(requests.length, 3);
+  assert.equal(service.selectedCover('/song.mp3', results[0].token).toString(), 'cover');
+  assert.throws(() => service.selectedCover('/another.mp3', results[0].token), /expired/);
+  clock += 10 * 60 * 1000 + 1;
+  assert.throws(() => service.selectedCover('/song.mp3', results[0].token), /expired/);
+  await assert.rejects(service.search({ filePath: '/song.mp3', title: '', artist: 'Artist' }), /song title/);
+});
+
+test('cover search handles no matches, service errors, and bounded responses', async () => {
+  const service = fetch => createArtworkSearch({ fetch, interval: 0, prepareCover: () => null });
+  const query = { filePath: '/song.mp3', title: 'Song', artist: 'Artist' };
+  assert.deepEqual(await service(async () => Response.json({ recordings: [] })).search(query), []);
+  await assert.rejects(service(async () => new Response('', { status: 503 })).search(query), /unavailable/);
+  await assert.rejects(readLimited(new Response('Too long'), 3), /too much data/);
+  await assert.rejects(readLimited(new Response('x', { headers: { 'Content-Length': '100' } }), 3), /too much data/);
+});
 
 test('text and attribute escaping preserves quotes without introducing attributes', () => {
   assert.equal(escapeHTML('Song "Live" & <remix>\'s'), 'Song &quot;Live&quot; &amp; &lt;remix&gt;&#39;s');
@@ -115,6 +150,31 @@ test('scanning bounds metadata work, caches unchanged files, and retries changed
   assert.equal(progress.at(-1).completed, 25);
 });
 
+test('embedded artwork prefers the front cover, is cached, and updates with file changes', async () => {
+  let version=1,parses=0,conversions=0;
+  const back={type:'Cover (back)',data:Buffer.from('back')},front={type:'Cover (front)',data:Buffer.from('front')};
+  const library=createLibrary({
+    fileSystem:{stat:async()=>({isFile:()=>true,size:10,mtimeMs:version,ctimeMs:version})},
+    parseFile:async (_file,options)=>{parses++;assert.equal(options.skipCovers,false);return {common:{title:'Song',picture:version===1?[back,front]:[]},format:{duration:5}}},
+    createThumbnail:picture=>{conversions++;assert.equal(picture,front);return 'thumbnail'}
+  });
+  assert.equal((await library.readTrack('/music/cover.mp3')).artwork,'thumbnail');
+  assert.equal((await library.readTrack('/music/cover.mp3')).artwork,'thumbnail');
+  assert.equal(parses,1);assert.equal(conversions,1);
+  version++;
+  assert.equal((await library.readTrack('/music/cover.mp3')).artwork,null);
+});
+
+test('a damaged embedded cover preserves readable song metadata', async () => {
+  const library=createLibrary({
+    fileSystem:{stat:async()=>({isFile:()=>true,size:10,mtimeMs:1})},
+    parseFile:async()=>({common:{title:'Song',artist:'Artist',picture:[{data:Buffer.from('bad')}]},format:{duration:5}}),
+    createThumbnail:()=>{throw Error('Bad image')}
+  });
+  const track=await library.readTrack('/music/bad-cover.mp3');
+  assert.equal(track.title,'Song');assert.equal(track.artist,'Artist');assert.equal(track.artwork,null);
+});
+
 test('an unreadable subfolder does not discard readable siblings', async () => {
   const library = createLibrary({ fileSystem: {
     readdir: async directory => {
@@ -181,7 +241,12 @@ test('KIO sync verifies hashes and overwrites corrupt existing copies', async ()
 test('the worker reports truthy node-id3 errors as failures', async () => {
   const messages = [];
   vm.runInNewContext(await fs.readFile(path.join(__dirname, '../tag-worker.js'), 'utf8'), {
-    require: name => name === 'node:worker_threads' ? { parentPort: { postMessage: message => messages.push(message) }, workerData: { tags: {}, filePath: '/fake.mp3' } } : { update: () => new Error('write failed') }
+    require: name => {
+      if(name === 'node:worker_threads')return { parentPort: { postMessage: message => messages.push(message) }, workerData: { tags: {}, filePath: '/fake.mp3' } };
+      if(name.endsWith('ID3Definitions'))return {ID3_FRAME_OPTIONS:{APIC:{multiple:false}}};
+      if(name.endsWith('ID3Frames'))return {APIC:{create:()=>Buffer.alloc(0)}};
+      return { update: () => new Error('write failed') };
+    }
   });
   assert.equal(messages[0].ok, false);
 });
@@ -197,6 +262,32 @@ test('real tag worker writes tags and reports missing-file errors', async t => {
   assert.equal((await run(filePath)).ok, true);
   assert.equal(require('node-id3').read(filePath).title, 'Song "Live"');
   assert.equal((await run(path.join(directory, 'missing.mp3'))).ok, false);
+});
+
+test('cover writes replace front images and preserve back images, text tags, and audio bytes', async t => {
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'nightwave-artwork-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const NodeID3=require('node-id3'),filePath=path.join(directory,'song.mp3');
+  const picture=(id,data)=>({mime:'image/jpeg',type:{id},description:`Picture ${id}`,imageBuffer:Buffer.from(data)});
+  const first=NodeID3.create({title:'Song',artist:'Artist',album:'Album',image:picture(3,'old-front')});
+  const back=NodeID3.create({image:picture(4,'back')}).subarray(10);
+  const frames=Buffer.concat([first.subarray(10),back]),header=Buffer.from(first.subarray(0,10));
+  for(let i=0;i<4;i++)header[9-i]=(frames.length>>>(7*i))&127;
+  const audioBytes=Buffer.alloc(100,42);
+  await fs.writeFile(filePath,Buffer.concat([header,frames,audioBytes]));
+  const write=tags=>new Promise((resolve,reject)=>{
+    const worker=new Worker(path.join(__dirname,'../tag-worker.js'),{workerData:{filePath,tags}});
+    worker.once('message',result=>result.ok?resolve():reject(Error(result.message)));worker.once('error',reject);
+  });
+  await write({image:picture(3,'new-front')});
+  await write({title:'Edited song',artist:'Artist',album:'Album'});
+  const metadata=await (await import('music-metadata')).parseFile(filePath,{skipCovers:false});
+  assert.equal(metadata.common.title,'Edited song');assert.equal(metadata.common.artist,'Artist');assert.equal(metadata.common.album,'Album');
+  const pictures=metadata.common.picture;
+  assert.equal(pictures.length,2);
+  assert.equal(Buffer.from(pictures.find(image=>/front/i.test(image.type)).data).toString(),'new-front');
+  assert.equal(Buffer.from(pictures.find(image=>/back/i.test(image.type)).data).toString(),'back');
+  assert.deepEqual((await fs.readFile(filePath)).subarray(-100),audioBytes);
 });
 
 test('blob playback releases URLs on replacement, failure, and unload', async () => {

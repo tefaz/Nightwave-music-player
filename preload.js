@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fileUrl: filePath => ipcRenderer.invoke('music:file-url', filePath),
   findLyrics: track => ipcRenderer.invoke('music:find-lyrics', track),
   writeTags: values => ipcRenderer.invoke('music:write-tags', values),
+  searchArtwork: request => ipcRenderer.invoke('music:search-artwork', request),
+  saveArtwork: request => ipcRenderer.invoke('music:save-artwork', request),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),

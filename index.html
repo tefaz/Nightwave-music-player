@@ -32,7 +32,9 @@
         <button class="nav-item active" data-view="all"><span class="nav-icon">♫</span><span>All music</span><span id="track-count" class="count">0</span></button>
         <div class="section-heading"><span>PLAYLISTS</span><button id="new-playlist" aria-label="Create playlist">＋</button></div>
         <div id="playlist-list" class="playlist-list"></div>
-        <div class="sidebar-foot"><p>Files and playlists are saved on this device.</p></div>
+        <section id="sidebar-visualizer" class="sidebar-foot spectrum-panel" aria-label="Current song spectrum">
+          <canvas id="spectrum-canvas" aria-hidden="true"></canvas>
+        </section>
         <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize playlist sidebar" aria-orientation="vertical"></div>
       </aside>
 
@@ -60,12 +62,13 @@
 
       <footer class="player">
         <div class="now-playing"><div id="artwork" class="artwork">♫</div><div class="song-text"><strong id="now-title">Nothing playing</strong><span id="now-artist">Choose a track from your library</span></div></div>
-        <div class="controls"><div class="transport"><button id="shuffle" class="control small" aria-label="Shuffle">⤨</button><button id="previous" class="control" aria-label="Previous">◀◀</button><button id="play" class="play-button" aria-label="Play">▶</button><button id="next" class="control" aria-label="Next">▶▶</button><button id="repeat" class="control small" aria-label="Repeat">↻</button></div><div class="timeline"><span id="current-time">0:00</span><input id="progress" type="range" min="0" max="100" value="0" aria-label="Song progress" /><span id="duration">0:00</span></div></div>
+        <div class="controls"><div class="transport"><button id="shuffle" class="control small" aria-label="Shuffle">⤨</button><button id="previous" class="control" aria-label="Previous">◀◀</button><button id="play" class="play-button" aria-label="Play">▶</button><button id="next" class="control" aria-label="Next">▶▶</button><button id="repeat" class="control small" aria-label="Repeat">↻</button></div><div class="timeline"><span id="current-time">0:00</span><input id="progress" type="range" min="0" max="100" step="any" value="0" aria-label="Song progress" /><span id="duration">0:00</span></div></div>
         <div class="volume"><span>⌁</span><input id="volume" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Volume" /></div>
       </footer>
     </div>
     <audio id="audio"></audio>
     <script src="renderer-core.js"></script>
     <script src="app.js"></script>
+    <script src="visualizer.js"></script>
   </body>
 </html>

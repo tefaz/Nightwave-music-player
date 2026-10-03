@@ -26,7 +26,35 @@ function parseId3(bytes){if(decodeText(bytes.subarray(0,3))!=='ID3')return {};co
 function parseFlac(bytes){if(decodeText(bytes.subarray(0,4))!=='fLaC')return {};let offset=4;while(offset+4<=bytes.length){const header=bytes[offset],type=header&127,length=(bytes[offset+1]<<16)|(bytes[offset+2]<<8)|bytes[offset+3];if(type===4){const tags=parseCommentBlock(bytes,offset+4);return {title:tags.title,artist:tags.artist,album:tags.album}}offset+=4+length;if(header&128)break}return {}}
 function parseMp4(bytes){const result={},wanted={'©nam':'title','©ART':'artist','aART':'artist','©alb':'album'},containers=new Set(['moov','udta','meta','ilst']);function walk(start,end,parent=''){let offset=start;while(offset+8<=end){let size=read32(bytes,offset),header=8;if(size===1&&offset+16<=end){size=read32(bytes,offset+8);header=16}if(!size||offset+size>end)break;const type=String.fromCharCode(bytes[offset+4],bytes[offset+5],bytes[offset+6],bytes[offset+7]);const content=offset+header;if(type==='data'&&wanted[parent]&&content+8<=offset+size){const value=decodeText(bytes.subarray(content+8,offset+size));if(value&&!result[wanted[parent]])result[wanted[parent]]=value}else if(containers.has(type)||wanted[type])walk(content+(type==='meta'?4:0),offset+size,type);offset+=size}}walk(0,bytes.length);return result}
 async function embeddedTags(file){const bytes=new Uint8Array(await file.arrayBuffer());const tags={...parseId3(bytes),...parseFlac(bytes),...parseMp4(bytes)};if(!tags.title&&!tags.artist&&!tags.album){const text=decodeText(bytes);const marker=text.indexOf('vorbis');if(marker>=0){const comments=parseCommentBlock(bytes,marker+6);tags.title=comments.title;tags.artist=comments.artist;tags.album=comments.album}}return tags}
-async function trackMetadata(file){ const fallback=fileTitle(file.name).split(' - '); const defaults={title:fallback.length>1?fallback.slice(1).join(' - '):fileTitle(file.name),artist:fallback.length>1?fallback[0]:'Unknown artist',album:'Local files'}; try { const tags=await embeddedTags(file);return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album}; } catch { const parseBlob=await metadataParser;if(!parseBlob)return defaults;try{const metadata=await parseBlob(file,{skipCovers:true}),tags=metadata.common;return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album}}catch{return defaults} } }
+async function coverThumbnail(pictures = []) {
+  const picture=pictures.find(item=>/front/i.test(item.type||item.name||''))||pictures[0];
+  if(!picture?.data?.length||picture.data.length>10*1024*1024)return null;
+  let image;
+  try {
+    image=await createImageBitmap(new Blob([picture.data],{type:picture.format}));
+    const scale=Math.min(1,128/Math.max(image.width,image.height)),canvas=document.createElement('canvas');
+    canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));
+    canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);
+    return canvas.toDataURL('image/png');
+  } catch { return null; } finally { image?.close(); }
+}
+async function trackMetadata(file){
+  const fallback=fileTitle(file.name).split(' - '),defaults={title:fallback.length>1?fallback.slice(1).join(' - '):fileTitle(file.name),artist:fallback.length>1?fallback[0]:'Unknown artist',album:'Local files',artwork:null};
+  const parseBlob=await metadataParser;
+  if(parseBlob){try{
+    const metadata=await parseBlob(file,{skipCovers:false}),tags=metadata.common;
+    return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album,artwork:await coverThumbnail(tags.picture)};
+  }catch{}}
+  try{const tags=await embeddedTags(file);return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album}}catch{return defaults}
+}
+function artworkMarkup(artwork,fallback='♫',lazy=false){
+  return fallback+(typeof artwork==='string'&&/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(artwork)?`<img src="${artwork}" alt="" draggable="false"${lazy?' loading="lazy"':''}>`:'');
+}
+function renderArtwork(){
+  const track=state.tracks.find(item=>item.id===state.currentId);
+  $('#artwork').innerHTML=artworkMarkup(track?.artwork);
+  document.querySelectorAll('.mini-art img,.artwork img').forEach(image=>{image.onerror=()=>image.remove()});
+}
 // Playlist memberships use a file key rather than the library's temporary track ID.
 // That lets a playlist survive when its tracks are unloaded and later loaded again.
 const playlistTrackKeys = playlist => playlist.trackKeys || [];
@@ -37,7 +65,8 @@ function render(){ const editFocus=captureMetadataFocus();const tracks=visibleTr
  $('#playlist-list').innerHTML=state.playlists.map(p=>`<div class="playlist-item ${p.id===state.selected?'selected':''}" data-playlist-row="${escapeHTML(p.id)}" draggable="true" title="Drag to reorder this playlist"><button class="playlist-select" data-playlist="${escapeHTML(p.id)}"${p.id===state.selected?' aria-current="page"':''}><span>☷</span><span>${escapeHTML(p.name)}</span></button><span class="playlist-actions"><button data-rename="${escapeHTML(p.id)}" aria-label="Rename ${escapeHTML(p.name)}">✎</button><button data-delete="${escapeHTML(p.id)}" aria-label="Delete ${escapeHTML(p.name)}">×</button></span></div>`).join('');
  $('#empty-state').hidden=tracks.length>0; $('#track-area').hidden=!tracks.length;
  document.querySelectorAll('[data-sort]').forEach(button=>{const active=button.dataset.sort===state.sort.key;button.classList.toggle('sorted',active);button.querySelector('i').textContent=active?(state.sort.direction==='asc'?'↑':'↓'):''});
- $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to add to a playlist"><div class="title-cell"><div class="mini-art">${t.id===state.currentId?'▶':'♫'}</div><span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span><span class="track-actions">${t.path&&window.electronAPI?`<button class="external-drag" draggable="true" data-external-drag="${escapeHTML(t.id)}" title="Drag this audio file to another app or your desktop" aria-label="Drag ${escapeHTML(t.title)} to another app">↗</button>`:''}<button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
+ $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to add to a playlist"><div class="title-cell"><div class="mini-art">${artworkMarkup(t.artwork,t.id===state.currentId?'▶':'♫',true)}</div><span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span><span class="track-actions">${t.path&&window.electronAPI?`<button class="external-drag" draggable="true" data-external-drag="${escapeHTML(t.id)}" title="Drag this audio file to another app or your desktop" aria-label="Drag ${escapeHTML(t.title)} to another app">↗</button>`:''}<button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
+ renderArtwork();
  restoreMetadataEditor(editFocus);
 }
 function escapeHTML(s){return NightwaveCore.escapeHTML(s)}
@@ -79,10 +108,16 @@ async function refreshLoadedFolders(){
 function manageLibraryFolders(){if(!state.libraryFolders.length)return;const dialog=document.createElement('dialog');dialog.className='text-dialog folder-dialog';dialog.innerHTML='<form method="dialog"><p>Refresh will scan the folders listed here. Removing a folder does not remove music already loaded in Nightwave.</p><ul class="folder-list"></ul><div><button class="dialog-primary" value="done">Done</button></div></form>';const list=dialog.querySelector('.folder-list'),paint=()=>{list.innerHTML=state.libraryFolders.map((folder,index)=>`<li><code>${escapeHTML(folder)}</code><button type="button" data-remove-folder="${index}" aria-label="Remove ${escapeHTML(folder)}">Remove</button></li>`).join('')};paint();dialog.onclick=event=>{const button=event.target.closest('[data-remove-folder]');if(!button)return;state.libraryFolders.splice(Number(button.dataset.removeFolder),1);saveLibraryFolders();render();paint()};dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal()}
 async function addFiles(files){for(const file of files)await addTrack(file);render();toast(`${files.length} file${files.length===1?'':'s'} saved to your library`)}
 function releaseAudio(){audio.pause();audio.removeAttribute('src');audio.load();if(state.objectUrl)URL.revokeObjectURL(state.objectUrl);state.objectUrl=null}
+// The fill ends at the thumb centre, whose travel excludes the thumb width.
+function updateSongProgress(value) {
+  const progress = $('#progress');
+  progress.value = Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
+  progress.style.setProperty('--progress-fraction', Number(progress.value) / 100);
+}
 function stopPlayback(){
   playbackRequest++;releaseAudio();state.currentId=null;playbackQueue.clear();
   $('#now-title').textContent='Nothing playing';$('#now-artist').textContent='Choose a track from your library';$('#play').textContent='▶';
-  $('#current-time').textContent=$('#duration').textContent='0:00';$('#progress').value=0;$('#progress').style.setProperty('--value','0%');updateMediaSession();
+  $('#current-time').textContent=$('#duration').textContent='0:00';updateSongProgress(0);$('#artwork').textContent='♫';updateMediaSession();
 }
 async function clearLibrary(){
   if(!state.tracks.length){toast('Your library is already empty.');return}
@@ -135,7 +170,7 @@ function nextTrack(back=false){
 async function newPlaylist(){ const name=await askText('Name your playlist');if(!name)return; const p={id:id(),name,trackKeys:[],order:state.playlists.length};await put('playlists',p);state.playlists.push(p);state.selected=p.id;render(); }
 async function renamePlaylist(playlistId){const playlist=state.playlists.find(p=>p.id===playlistId);if(!playlist)return;const name=await askText('Rename playlist',playlist.name);if(!name||name===playlist.name)return;await put('playlists',{...playlist,name});playlist.name=name;render();}
 async function deletePlaylist(playlistId){const playlist=state.playlists.find(p=>p.id===playlistId);if(!playlist||!await askConfirm(`Delete the playlist “${playlist.name}”? Its music files will stay in your library.`,'Delete playlist'))return;await del('playlists',playlistId);state.playlists=state.playlists.filter(p=>p.id!==playlistId);if(state.selected===playlistId)state.selected='all';render();toast('Playlist deleted.');}
-async function songMenu(trackId,anchor){const track=state.tracks.find(item=>item.id===trackId);if(!track)return;const choice=await askSongAction(anchor);if(choice==='playlist')return addToPlaylist(trackId);if(choice==='lyrics')return openLyrics(track);if(choice==='reveal'){if(track.path&&window.electronAPI)await window.electronAPI.showInFolder(track.path);else toast('This file must be loaded through the Electron folder picker first.')}}
+async function songMenu(trackId,anchor){const track=state.tracks.find(item=>item.id===trackId);if(!track)return;const choice=await askSongAction(anchor,track);if(choice==='playlist')return addToPlaylist(trackId);if(choice==='lyrics')return openLyrics(track);if(choice==='artwork')return updateThumbnail(track);if(choice==='reveal'){if(track.path&&window.electronAPI)await window.electronAPI.showInFolder(track.path);else toast('This file must be loaded through the Electron folder picker first.')}}
 function captureMetadataFocus(){
   const focused=document.activeElement;
   if(!focused?.closest('.inline-metadata-editor'))return null;
@@ -206,7 +241,50 @@ function askText(label,initial=''){
   });
 }
 function askConfirm(message,action='Confirm'){return new Promise(resolve=>{const dialog=document.createElement('dialog');dialog.className='text-dialog';dialog.innerHTML=`<form method="dialog"><p>${escapeHTML(message)}</p><div><button type="button" data-cancel>Cancel</button><button class="dialog-primary" value="confirm">${escapeHTML(action)}</button></div></form>`;document.body.append(dialog);dialog.querySelector('[data-cancel]').onclick=()=>dialog.close('cancel');dialog.addEventListener('close',()=>{const accepted=dialog.returnValue==='confirm';dialog.remove();resolve(accepted)});dialog.showModal()})}
-function askSongAction(anchor){return new Promise(resolve=>{const menu=document.createElement('div'),rect=anchor.getBoundingClientRect();menu.className='song-popover';menu.innerHTML='<button data-action="playlist">Add to playlist</button><button data-action="lyrics">Lyrics</button><button data-action="reveal">Show in file manager</button>';document.body.append(menu);const width=menu.offsetWidth,height=menu.offsetHeight;menu.style.left=`${Math.max(10,Math.min(window.innerWidth-width-10,rect.right-width))}px`;menu.style.top=`${Math.max(10,Math.min(window.innerHeight-height-10,rect.bottom+6))}px`;const close=action=>{menu.remove();document.removeEventListener('mousedown',outside);document.removeEventListener('keydown',escape);resolve(action)};const outside=event=>{if(!menu.contains(event.target)&&event.target!==anchor)close('cancel')};const escape=event=>{if(event.key==='Escape')close('cancel')};menu.onclick=event=>{const button=event.target.closest('[data-action]');if(button)close(button.dataset.action)};setTimeout(()=>{document.addEventListener('mousedown',outside);document.addEventListener('keydown',escape)},0)})}
+function askSongAction(anchor,track){return new Promise(resolve=>{const menu=document.createElement('div'),rect=anchor.getBoundingClientRect();menu.className='song-popover';menu.innerHTML=`<button data-action="playlist">Add to playlist</button><button data-action="lyrics">Lyrics</button><button data-action="artwork"${window.electronAPI?.searchArtwork&&track.path&&/\.mp3$/i.test(track.path)?'':' disabled title="Available for MP3 files loaded from a folder"'}>Update thumbnail</button><button data-action="reveal">Show in file manager</button>`;document.body.append(menu);const width=menu.offsetWidth,height=menu.offsetHeight;menu.style.left=`${Math.max(10,Math.min(window.innerWidth-width-10,rect.right-width))}px`;menu.style.top=`${Math.max(10,Math.min(window.innerHeight-height-10,rect.bottom+6))}px`;const close=action=>{menu.remove();document.removeEventListener('mousedown',outside);document.removeEventListener('keydown',escape);resolve(action)};const outside=event=>{if(!menu.contains(event.target)&&event.target!==anchor)close('cancel')};const escape=event=>{if(event.key==='Escape')close('cancel')};menu.onclick=event=>{const button=event.target.closest('[data-action]');if(button&&!button.disabled)close(button.dataset.action)};setTimeout(()=>{document.addEventListener('mousedown',outside);document.addEventListener('keydown',escape)},0)})}
+function updateThumbnail(track){
+  if(!window.electronAPI?.searchArtwork||!track.path||!/\.mp3$/i.test(track.path)){toast('Saving album covers is available for MP3 files loaded from a folder.');return}
+  const dialog=document.createElement('dialog');dialog.className='text-dialog artwork-dialog';
+  dialog.innerHTML='<h2>Update thumbnail</h2><p>Choose a cover to save into this MP3. It will replace the existing embedded cover.</p><form class="artwork-search"><label>Song<input name="title" maxlength="200" required></label><label>Artist<input name="artist" maxlength="200" required></label><button class="dialog-primary" type="submit">Search</button></form><p class="artwork-status" role="status" aria-live="polite"></p><div class="artwork-results"></div><p class="artwork-source">Covers from MusicBrainz / Cover Art Archive</p><div class="artwork-dialog-actions"><button type="button" data-cancel>Cancel</button></div>';
+  const form=dialog.querySelector('form'),title=form.elements.title,artist=form.elements.artist,status=dialog.querySelector('.artwork-status'),results=dialog.querySelector('.artwork-results'),cancel=dialog.querySelector('[data-cancel]');
+  title.value=track.title||'';artist.value=track.artist==='Unknown artist'?'':track.artist||'';
+  let requestId=0,saving=false;
+  const setBusy=busy=>{form.querySelectorAll('input,button').forEach(control=>control.disabled=busy);results.querySelectorAll('button').forEach(button=>button.disabled=busy)};
+  cancel.onclick=()=>dialog.close();
+  dialog.addEventListener('cancel',event=>{if(saving)event.preventDefault()});
+  dialog.addEventListener('close',()=>{requestId++;dialog.remove()},{once:true});
+  async function search(){
+    if(!form.reportValidity())return;
+    const request=++requestId;setBusy(true);results.replaceChildren();status.textContent='Searching for album covers…';
+    try{
+      const covers=await window.electronAPI.searchArtwork({filePath:track.path,title:title.value.trim(),artist:artist.value.trim(),album:track.album||''});
+      if(!dialog.open||request!==requestId)return;
+      status.textContent=covers.length?'Choose the correct album cover below.':'No matching covers found. Try adjusting the song or artist name.';
+      for(const cover of covers){
+        const card=document.createElement('div');card.className='artwork-result';
+        const image=document.createElement('img');image.src=cover.preview;image.alt=`Cover for ${cover.album}`;
+        const name=document.createElement('strong');name.textContent=cover.album;
+        const detail=document.createElement('span');detail.textContent=`${cover.title} · ${cover.artist}`;
+        const save=document.createElement('button');save.type='button';save.className='dialog-primary';save.textContent='Save cover';save.setAttribute('aria-label',`Save cover for ${cover.album}`);
+        save.onclick=async()=>{
+          if(saving)return;saving=true;setBusy(true);cancel.disabled=true;status.textContent='Saving cover into the song file…';
+          try{
+            const updated=await window.electronAPI.saveArtwork({filePath:track.path,token:cover.token});
+            const current=state.tracks.find(item=>item.id===track.id);
+            if(current){await put('tracks',{...current,...updated});Object.assign(current,updated)}
+            render();dialog.close();toast('Album cover saved into the song file.');
+          }catch(error){status.textContent=error.message||'Could not save this cover. Try again.'}
+          finally{saving=false;cancel.disabled=false;setBusy(false)}
+        };
+        card.append(image,name,detail,save);results.append(card);
+      }
+    }catch(error){if(dialog.open&&request===requestId)status.textContent=error.message||'Cover search failed. Check your connection and try again.'}
+    finally{if(dialog.open&&request===requestId)setBusy(false)}
+  }
+  form.onsubmit=event=>{event.preventDefault();search()};
+  document.body.append(dialog);dialog.showModal();
+  if(title.value&&artist.value)search();else status.textContent='Enter the song title and artist to search for a cover.';
+}
 let lyricsRequestId=0;
 async function openLyrics(track){const panel=$('#lyrics-panel'),requestId=++lyricsRequestId;panel.hidden=false;$('.app-shell').classList.add('lyrics-open');$('#lyrics-title').textContent=track.title;$('#lyrics-artist').textContent=track.artist||'Unknown artist';$('#lyrics-status').textContent='Searching for lyrics…';$('#lyrics-text').hidden=true;$('#lyrics-text').textContent='';$('#lyrics-credit').hidden=true;if(!window.electronAPI?.findLyrics){$('#lyrics-status').textContent='Lyrics are available in the desktop app.';return}const result=await window.electronAPI.findLyrics({title:track.title,artist:track.artist,album:track.album,duration:track.duration});if(requestId!==lyricsRequestId)return;if(result.status==='found'){if(result.title!==track.title||result.artist!==track.artist)$('#lyrics-status').textContent=`Found: ${result.title} — ${result.artist}`;else $('#lyrics-status').textContent='';$('#lyrics-text').textContent=result.lyrics;$('#lyrics-text').hidden=false;$('#lyrics-credit').hidden=false}else $('#lyrics-status').textContent=result.status==='not-found'?'No lyrics were found for this song.':'Lyrics could not be reached. Check your internet connection and try again.'}
 function paintSelection(){document.querySelectorAll('#track-list [data-track]').forEach(row=>row.classList.toggle('selected-track',state.selectedTrackIds.has(row.dataset.track)))}
@@ -268,9 +346,23 @@ async function togglePlayback(){if(!state.currentId){const track=visibleTracks()
 function updateMediaSession(){if(!('mediaSession' in navigator))return;const track=state.tracks.find(item=>item.id===state.currentId);navigator.mediaSession.playbackState=track&&!audio.paused?'playing':track?'paused':'none';if(track&&'MediaMetadata' in window)navigator.mediaSession.metadata=new MediaMetadata({title:track.title,artist:track.artist,album:track.album});else if(!track)navigator.mediaSession.metadata=null}
 function setupMediaSession(){if(!('mediaSession' in navigator))return;const handlers={play:()=>{if(audio.paused)togglePlayback()},pause:()=>{if(!audio.paused)togglePlayback()},previoustrack:()=>nextTrack(true),nexttrack:()=>nextTrack()};for(const [action,handler] of Object.entries(handlers)){try{navigator.mediaSession.setActionHandler(action,handler)}catch{}}}
 $('#play').onclick=togglePlayback;$('#next').onclick=()=>nextTrack();$('#previous').onclick=()=>nextTrack(true);window.electronAPI?.onPlaybackCommand(command=>{if(command==='toggle')togglePlayback();else if(command==='next')nextTrack();else if(command==='previous')nextTrack(true)});setupMediaSession();$('#shuffle').onclick=e=>{state.shuffle=!state.shuffle;playbackQueue.setShuffle(state.shuffle);e.currentTarget.classList.toggle('active',state.shuffle)};$('#repeat').onclick=e=>{state.repeat=!state.repeat;e.currentTarget.classList.toggle('active',state.repeat)};
-audio.ontimeupdate=()=>{const value=audio.duration?audio.currentTime/audio.duration*100:0;$('#progress').value=value;$('#progress').style.setProperty('--value',value+'%');$('#current-time').textContent=time(audio.currentTime)};audio.onloadedmetadata=()=>{$('#duration').textContent=time(audio.duration)};audio.onplay=updateMediaSession;audio.onpause=updateMediaSession;audio.onended=()=>state.repeat?(audio.currentTime=0,audio.play()):nextTrack();$('#progress').oninput=e=>{if(audio.duration)audio.currentTime=audio.duration*(e.target.value/100)};const savedVolumeValue=localStorage.getItem('nightwave-volume'),savedVolume=Number(savedVolumeValue),initialVolume=savedVolumeValue!==null&&Number.isFinite(savedVolume)&&savedVolume>=0&&savedVolume<=1?savedVolume:.8,volumeControl=$('#volume');audio.volume=initialVolume;volumeControl.value=initialVolume;volumeControl.style.setProperty('--value',`${initialVolume*100}%`);volumeControl.oninput=e=>{audio.volume=e.target.value;volumeControl.style.setProperty('--value',`${audio.volume*100}%`);localStorage.setItem('nightwave-volume',audio.volume)};
+audio.ontimeupdate=()=>{const value=audio.duration?audio.currentTime/audio.duration*100:0;updateSongProgress(value);$('#current-time').textContent=time(audio.currentTime)};audio.onloadedmetadata=()=>{$('#duration').textContent=time(audio.duration)};audio.onplay=updateMediaSession;audio.onpause=updateMediaSession;audio.onended=()=>state.repeat?(audio.currentTime=0,audio.play()):nextTrack();$('#progress').oninput=e=>{updateSongProgress(Number(e.target.value));if(Number.isFinite(audio.duration)&&audio.duration>0){audio.currentTime=audio.duration*(e.target.value/100);$('#current-time').textContent=time(audio.currentTime)}};const savedVolumeValue=localStorage.getItem('nightwave-volume'),savedVolume=Number(savedVolumeValue),initialVolume=savedVolumeValue!==null&&Number.isFinite(savedVolume)&&savedVolume>=0&&savedVolume<=1?savedVolume:.8,volumeControl=$('#volume');audio.volume=initialVolume;volumeControl.value=initialVolume;volumeControl.style.setProperty('--value',`${initialVolume*100}%`);volumeControl.oninput=e=>{audio.volume=e.target.value;volumeControl.style.setProperty('--value',`${audio.volume*100}%`);localStorage.setItem('nightwave-volume',audio.volume)};
 const looksTemporaryTitle = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value||'').trim());
-async function refreshSavedMetadata(){ const updates=state.tracks.filter(track=>track.file).map(async track=>{const metadata=await trackMetadata(track.file);if(track.title!==metadata.title||track.artist!==metadata.artist||track.album!==metadata.album){Object.assign(track,metadata);await put('tracks',track)}});await Promise.all(updates);if(window.electronAPI){for(const track of state.tracks.filter(item=>item.path&&looksTemporaryTitle(item.title))){try{const metadata=await window.electronAPI.readTrack(track.path);Object.assign(track,metadata);await put('tracks',track)}catch{}}}render(); }
+async function refreshSavedMetadata(){
+  // Older library entries lack the artwork field. Read them once in the background.
+  let changed=0;
+  for(const track of [...state.tracks]){
+    if(!track.file&&!(window.electronAPI&&track.path&&(track.artwork===undefined||looksTemporaryTitle(track.title))))continue;
+    try{
+      const metadata=track.file?await trackMetadata(track.file):await window.electronAPI.readTrack(track.path);
+      if(!state.tracks.includes(track))continue;
+      if(track.title!==metadata.title||track.artist!==metadata.artist||track.album!==metadata.album||track.artwork!==metadata.artwork){
+        Object.assign(track,metadata);await put('tracks',track);if(++changed%20===0)render();
+      }
+    }catch{}
+  }
+  render();
+}
 async function migratePlaylists(){const keyForId=new Map(state.tracks.map(track=>[track.id,track.key]));let changed=false;state.playlists.sort((a,b)=>(a.order??Number.MAX_SAFE_INTEGER)-(b.order??Number.MAX_SAFE_INTEGER));for(const [index,playlist] of state.playlists.entries()){if(!Array.isArray(playlist.trackKeys)){playlist.trackKeys=(playlist.trackIds||[]).map(trackId=>keyForId.get(trackId)).filter(Boolean);delete playlist.trackIds;changed=true}if(playlist.order!==index){playlist.order=index;changed=true}}if(changed)await writeBatch(db,'playlists',state.playlists)}
 (async()=>{db=await openDB();state.tracks=await all('tracks');state.playlists=await all('playlists');await migratePlaylists();render();const legacyCount=state.tracks.filter(track=>!track.file&&!track.path).length;if(legacyCount)toast(`${legacyCount} older ${legacyCount===1?'track needs':'tracks need'} to be loaded again to read their tags.`);refreshSavedMetadata()})().catch(()=>toast('Storage could not be opened.'));
 window.addEventListener('unhandledrejection',event=>{console.error(event.reason);toast(event.reason?.message||'The operation could not be saved. Please try again.');event.preventDefault()});
