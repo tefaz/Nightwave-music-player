@@ -94,6 +94,8 @@ For KDE systems, Nightwave can fall back to `kioclient5` when GIO cannot access 
 
 ## Development
 
+Before publishing a version tag, add a plain-language description of that version's changes to `release-notes/vX.Y.Z.md`. The release workflow uses this file as the GitHub release description and requires it before building packages. Updating a notes file on `main` also updates the description of its existing GitHub release.
+
 Run the regression suite and JavaScript syntax checks before committing changes:
 
 ```bash

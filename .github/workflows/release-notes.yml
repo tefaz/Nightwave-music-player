@@ -1,0 +1,31 @@
+name: Update release descriptions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'release-notes/*.md'
+      - '.github/workflows/release-notes.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update-notes:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Update published release descriptions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          published_tags=$(gh release list --limit 100 --json tagName --jq '.[].tagName')
+          for notes in release-notes/v*.md; do
+            tag=$(basename "$notes" .md)
+            if printf '%s\n' "$published_tags" | grep -Fxq "$tag"; then
+              gh release edit "$tag" --notes-file "$notes"
+            fi
+          done

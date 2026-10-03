@@ -15,6 +15,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Require release description
+        run: test -s "release-notes/$GITHUB_REF_NAME.md"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -49,6 +52,6 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "Nightwave $GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file "release-notes/$GITHUB_REF_NAME.md" \
             "dist/Nightwave-${GITHUB_REF_NAME#v}.AppImage" \
             "dist/nightwave-music-player_${GITHUB_REF_NAME#v}_amd64.deb"
