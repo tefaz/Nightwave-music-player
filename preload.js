@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 let scanSequence = 0;
 function scan(channel, args, onProgress) {
   const requestId = ++scanSequence;
@@ -11,7 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   refreshMusicFolders: (directories, onProgress) => scan('music:refresh-folders', [directories], onProgress),
   readTrack: filePath => ipcRenderer.invoke('music:read-track', filePath),
   showInFolder: filePath => ipcRenderer.invoke('music:show-in-folder', filePath),
-  startExternalDrag: filePath => ipcRenderer.send('music:start-external-drag', filePath),
+  startExternalDrag: filePaths => ipcRenderer.send('music:start-external-drag', filePaths),
+  getPathForFile: file => webUtils.getPathForFile(file),
   fileUrl: filePath => ipcRenderer.invoke('music:file-url', filePath),
   findLyrics: track => ipcRenderer.invoke('music:find-lyrics', track),
   writeTags: values => ipcRenderer.invoke('music:write-tags', values),

@@ -170,12 +170,14 @@ handle('music:refresh-folders', async (event, directories, requestId) => {
 });
 handle('music:read-track', async (_event, filePath) => library.readTrack(await audioFile(filePath)));
 handle('music:show-in-folder', async (_event, filePath) => shell.showItemInFolder(await audioFile(filePath)));
-ipcMain.on('music:start-external-drag', async (event, filePath) => {
+ipcMain.on('music:start-external-drag', async (event, filePaths) => {
   try {
     validateSender(event);
-    const validated = await audioFile(filePath);
+    const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
+    if (!paths.length || paths.length > 10000) throw new Error('Invalid drag file list.');
+    const validated = await Promise.all([...new Set(paths)].map(audioFile));
     if (!event.sender.isDestroyed()) event.sender.startDrag({
-      file: validated,
+      files: validated,
       icon: nativeImage.createFromPath(path.join(__dirname, 'assets', 'nightwave-icon.png')).resize({ width: 64, height: 64 })
     });
   } catch (error) { console.warn('External drag failed:', error.message); }

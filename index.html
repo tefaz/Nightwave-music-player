@@ -15,11 +15,23 @@
       <header class="topbar">
         <a class="brand" href="#"><span class="brand-mark">⌁</span> nightwave</a>
         <nav class="menu" aria-label="Main menu">
-          <button id="load-folder" class="menu-link"><span>＋</span> Load folder</button>
-          <button id="refresh-folders" class="menu-link" type="button" title="Rescan loaded music folders">↻ Refresh folders</button>
-          <button id="manage-folders" class="menu-link" type="button" title="Manage remembered music folders">Folders</button>
-          <button id="add-files" class="menu-link">Add files</button>
-          <details class="library-tools"><summary aria-label="Library options" title="Library options">•••</summary><div class="library-tools-menu"><button id="clear-library" type="button">Clear library…</button></div></details>
+          <details id="files-menu" class="header-menu" name="header-menu">
+            <summary>Files</summary>
+            <div class="header-dropdown" aria-label="File actions">
+              <button id="load-folder" type="button">Load folder</button>
+              <button id="refresh-folders" type="button" title="Rescan loaded music folders">↻ Refresh folders</button>
+              <button id="manage-folders" type="button" title="Manage remembered music folders">Folders</button>
+              <button id="add-files" type="button">Add files</button>
+              <hr />
+              <button id="clear-library" class="danger" type="button">Clear library…</button>
+            </div>
+          </details>
+          <details id="view-menu" class="header-menu" name="header-menu">
+            <summary>View</summary>
+            <div class="header-dropdown" aria-label="View options">
+              <button id="show-equalizer" type="button" aria-pressed="true"><span class="menu-check" aria-hidden="true">✓</span>Show equalizer</button>
+            </div>
+          </details>
           <input id="file-input" type="file" accept="audio/*" multiple hidden />
           <input id="folder-input" type="file" accept="audio/*" webkitdirectory directory multiple hidden />
         </nav>
@@ -63,7 +75,7 @@
       <footer class="player">
         <div class="now-playing"><div id="artwork" class="artwork">♫</div><div class="song-text"><strong id="now-title">Nothing playing</strong><span id="now-artist">Choose a track from your library</span></div></div>
         <div class="controls"><div class="transport"><button id="shuffle" class="control small" aria-label="Shuffle">⤨</button><button id="previous" class="control" aria-label="Previous">◀◀</button><button id="play" class="play-button" aria-label="Play">▶</button><button id="next" class="control" aria-label="Next">▶▶</button><button id="repeat" class="control small" aria-label="Repeat">↻</button></div><div class="timeline"><span id="current-time">0:00</span><input id="progress" type="range" min="0" max="100" step="any" value="0" aria-label="Song progress" /><span id="duration">0:00</span></div></div>
-        <div class="volume"><span>⌁</span><input id="volume" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Volume" /></div>
+        <div class="volume"><svg class="volume-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></svg><input id="volume" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Volume" /></div>
       </footer>
     </div>
     <audio id="audio"></audio>

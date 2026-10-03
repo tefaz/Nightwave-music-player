@@ -42,7 +42,7 @@ function finish(error) {
   if (finished) return;finished = true;clearTimeout(timeout);
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
   if (error) { console.error(error); if(fatalErrors.length)console.error('Renderer errors:',fatalErrors); }
-  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, inline editing, tag writes, scanning, playback, live spectrum, embedded artwork, progress alignment, click timing, IndexedDB rollback).');
+  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, saved equalizer visibility, embedded artwork, progress alignment, click timing, IndexedDB rollback).');
   // Only remove this runner's validated mkdtemp directory.
   fs.rmSync(temporary, { recursive: true, force: true });
   app.exit(error ? 1 : 0);
@@ -60,10 +60,94 @@ app.on('browser-window-created', (_event, window) => {
       // Wait until the actual app has finished opening its database.
       await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(db){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Database unavailable'))}},20)})`);
       assert.equal(await execute(`Boolean(window.electronAPI && NightwaveCore)`), true);
+      // Keep the real preload + IPC + file validation, replacing only the OS drag
+      // call, which needs an interactive desktop. Exercise every part of the row.
+      const nativeDrags=[], originalStartDrag=window.webContents.startDrag;
+      window.webContents.startDrag=item=>nativeDrags.push(item);
+      const dragFrom=selector=>execute(`(()=>{const transfer=new DataTransfer(),event=new DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:transfer});document.querySelector(${JSON.stringify(selector)}).dispatchEvent(event);return {cancelled:event.defaultPrevented,text:transfer.getData('text/plain')}})()`);
+      const waitForDrags=async count=>{
+        const deadline=Date.now()+2000;
+        while(nativeDrags.length<count&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));
+        assert.equal(nativeDrags.length,count);
+      };
+      for(const selector of ['.track-title','.artist-cell','.album-cell','.time-cell','.mini-art','.track-row']){
+        const beforeDrag=nativeDrags.length;
+        assert.equal((await dragFrom(selector)).cancelled,true);
+        await waitForDrags(beforeDrag+1);
+        assert.deepEqual(nativeDrags.at(-1).files,[audioPath]);
+        assert.equal(nativeDrags.at(-1).icon.isEmpty(),false);
+      }
+      const beforeMenuDrag=nativeDrags.length;
+      assert.equal((await dragFrom('.row-menu')).cancelled,true);
+      assert.equal(nativeDrags.length,beforeMenuDrag);
+      await execute(`state.tracks.push({id:'tone-test',key:${JSON.stringify(tonePath)},path:${JSON.stringify(tonePath)},title:'Tone',artist:'Artist',album:'Album',duration:1});state.selectedTrackIds=new Set(['test-track','tone-test']);state.playlists=[{id:'drag-playlist',name:'Drag target',trackKeys:[]},{id:'other-playlist',name:'Other',trackKeys:[]}];render()`);
+      const beforeMultiDrag=nativeDrags.length;
+      await dragFrom('[data-track="test-track"] .track-title');
+      await waitForDrags(beforeMultiDrag+1);
+      assert.deepEqual(nativeDrags.at(-1).files,[audioPath,tonePath]);
+      // Chromium creates real, disk-backed File objects for these native drops.
+      // This verifies path lookup through the isolated preload, the playlist UI,
+      // and IndexedDB persistence rather than merely calling a helper function.
+      window.webContents.debugger.attach('1.3');
+      const dropFiles=async files=>{
+        const {x,y}=await execute(`(()=>{const rect=document.querySelector('[data-playlist-row="drag-playlist"]').getBoundingClientRect();return {x:rect.x+rect.width/2,y:rect.y+rect.height/2}})()`);
+        for(const type of ['dragEnter','dragOver','drop'])await window.webContents.debugger.sendCommand('Input.dispatchDragEvent',{type,x,y,data:{items:[],files,dragOperationsMask:1}});
+      };
+      await dropFiles([audioPath,tonePath]);
+      await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(state.playlists[0].trackKeys.length===2){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Native playlist drop did not finish'))}},10)})`);
+      assert.deepEqual(await execute(`state.playlists[0].trackKeys`),[audioPath,tonePath]);
+      assert.deepEqual(await execute(`all('playlists').then(playlists=>playlists.find(p=>p.id==='drag-playlist').trackKeys)`),[audioPath,tonePath]);
+      await dropFiles([audioPath,tonePath]);
+      await execute(`new Promise(resolve=>setTimeout(resolve,30))`);
+      assert.deepEqual(await execute(`state.playlists[0].trackKeys`),[audioPath,tonePath]);
+      assert.equal(await execute(`Boolean(document.querySelector('.drop-target'))`),false);
+      await dropFiles([tagPath]);
+      await execute(`new Promise(resolve=>setTimeout(resolve,30))`);
+      assert.deepEqual(await execute(`state.playlists[0].trackKeys`),[audioPath,tonePath]);
+      // Individual file imports must retain their disk path, just like folder scans.
+      const {root}=await window.webContents.debugger.sendCommand('DOM.getDocument');
+      const {nodeId}=await window.webContents.debugger.sendCommand('DOM.querySelector',{nodeId:root.nodeId,selector:'#file-input'});
+      await window.webContents.debugger.sendCommand('DOM.setFileInputFiles',{nodeId,files:[audioPath]});
+      await execute(`addTrack(document.querySelector('#file-input').files[0])`);
+      assert.equal(await execute(`state.tracks.find(t=>t.file)?.path`),audioPath);
+      assert.equal(await execute(`all('tracks').then(tracks=>tracks.find(t=>t.file)?.path)`),audioPath);
+      // A file loaded twice can have two library keys; a native drop recognizes both.
+      await dropFiles([audioPath]);
+      await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(state.playlists[0].trackKeys.length===3){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Imported file drop did not finish'))}},10)})`);
+      const importedKey=await execute(`state.tracks.find(t=>t.file).key`);
+      assert.deepEqual(await execute(`state.playlists[0].trackKeys`),[audioPath,tonePath,importedKey]);
+      await execute(`state.tracks=state.tracks.filter(t=>!t.file);state.playlists[0].trackKeys=state.playlists[0].trackKeys.filter(key=>key!==${JSON.stringify(importedKey)})`);
+      window.webContents.debugger.detach();
+      // Browser-only tracks retain HTML playlist dragging, even in mixed selections.
+      await execute(`state.tracks.push({id:'browser-track',key:'browser-key',title:'Browser',artist:'Artist',album:'Album',duration:1});state.selectedTrackIds=new Set(['test-track','browser-track']);render()`);
+      const fallback=await dragFrom('[data-track="browser-track"] .track-title');
+      assert.equal(fallback.cancelled,false);
+      assert.deepEqual(JSON.parse(fallback.text),['test-track','browser-track']);
+      await execute(`(()=>{const transfer=new DataTransfer();transfer.setData('text/plain',${JSON.stringify(fallback.text)});return document.querySelector('#playlist-list').ondrop({preventDefault(){},target:document.querySelector('[data-playlist-row="drag-playlist"]'),dataTransfer:transfer})})()`);
+      assert.deepEqual(await execute(`state.playlists[0].trackKeys`),[audioPath,tonePath,'browser-key']);
+      await execute(`(()=>{const row=document.querySelector('[data-track="test-track"]');document.querySelector('#track-list').ondragend({target:row});const transfer=new DataTransfer();document.querySelector('#playlist-list').ondragstart({target:document.querySelector('[data-playlist-row="other-playlist"]'),dataTransfer:transfer});return document.querySelector('#playlist-list').ondrop({preventDefault(){},target:document.querySelector('[data-playlist-row="drag-playlist"]'),dataTransfer:transfer})})()`);
+      assert.deepEqual(await execute(`state.playlists.map(p=>p.id)`),['other-playlist','drag-playlist']);
+      window.webContents.startDrag=originalStartDrag;
+      await execute(`state.tracks=state.tracks.filter(t=>t.id==='test-track');state.playlists=[];state.selectedTrackIds=new Set();render()`);
+      // Header menus must be clickable in the draggable title bar, exclusive,
+      // dismissible, and still connected to the existing file input action.
+      assert.deepEqual(await execute(`Array.from(document.querySelectorAll('#files-menu button'),button=>button.id)`),['load-folder','refresh-folders','manage-folders','add-files','clear-library']);
+      assert.equal(await execute(`getComputedStyle(document.querySelector('#files-menu')).webkitAppRegion`),'no-drag');
+      await execute(`document.querySelector('#files-menu summary').click()`);
+      assert.equal(await execute(`document.querySelector('#files-menu').open&&document.querySelector('#load-folder').getBoundingClientRect().height>0`),true);
+      await execute(`document.querySelector('#view-menu summary').click()`);
+      assert.equal(await execute(`!document.querySelector('#files-menu').open&&document.querySelector('#view-menu').open`),true);
+      await execute(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`);
+      assert.equal(await execute(`!document.querySelector('#view-menu').open&&document.activeElement===document.querySelector('#view-menu summary')`),true);
+      await execute(`document.querySelector('#files-menu summary').click();document.querySelector('.content-head').click()`);
+      assert.equal(await execute(`Boolean(document.querySelector('.header-menu[open]'))`),false);
+      await execute(`document.querySelector('#file-input').addEventListener('click',event=>{event.preventDefault();window.filePickerClicked=true},{once:true});document.querySelector('#files-menu summary').click();document.querySelector('#add-files').click()`);
+      assert.equal(await execute(`window.filePickerClicked&&!document.querySelector('#files-menu').open`),true);
       const title = 'Song "Live" <img src=x onerror="window.injected=true">';
       await execute(`state.tracks=[{id:'test-track',key:${JSON.stringify(audioPath)},path:${JSON.stringify(audioPath)},title:${JSON.stringify(title)},artist:'Artist',album:'Album',duration:1}];render();audio.muted=true;`);
       assert.equal(await execute(`document.querySelector('.track-title').textContent`), title);
-      assert.equal(await execute(`document.querySelector('.external-drag').getAttribute('aria-label')`), `Drag ${title} to another app`);
+      assert.equal(await execute(`Boolean(document.querySelector('.external-drag'))`), false);
+      assert.equal(await execute(`document.querySelector('.track-row').title.includes('Drag to a playlist or another desktop app')`), true);
       assert.equal(await execute(`Boolean(document.querySelector('#track-list img') || window.injected)`), false);
       const artworkTrack=await execute(`window.electronAPI.readTrack(${JSON.stringify(coverPath)})`);
       assert(artworkTrack.artwork.startsWith('data:image/png;base64,'));
@@ -147,6 +231,15 @@ app.on('browser-window-created', (_event, window) => {
       await execute(`(async()=>{audio.muted=false;audio.volume=1;audio.loop=true;audio.src=await window.electronAPI.fileUrl(${JSON.stringify(tonePath)});await audio.play();await new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(sidebarVisualizer.analyser){sidebarVisualizer.draw();if(Math.max(...sidebarVisualizer.bins)>0){clearInterval(timer);resolve();return}}if(++attempts>100){clearInterval(timer);reject(Error('Local audio did not reach the spectrum analyser'))}},20)})})()`);
       assert.equal(await execute(`document.querySelector('#sidebar-visualizer').classList.contains('is-playing')`),true);
       assert.equal(await execute(`Math.max(...sidebarVisualizer.levels)>0`),true);
+      // Hiding the visualizer stops drawing but preserves the active audio path.
+      await execute(`window.toggleSpectrumSource=sidebarVisualizer.source;window.toggleSpectrumContext=sidebarVisualizer.context;document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise(resolve=>setTimeout(resolve,30))`);
+      assert.equal(await execute(`document.querySelector('#sidebar-visualizer').hidden&&getComputedStyle(document.querySelector('#sidebar-visualizer')).display==='none'&&sidebarVisualizer.frame===0`),true);
+      assert.equal(await execute(`document.querySelector('#show-equalizer').getAttribute('aria-pressed')`),'false');
+      assert.equal(await execute(`localStorage.getItem('nightwave-show-equalizer')`),'false');
+      assert.equal(await execute(`!audio.paused&&sidebarVisualizer.context.state==='running'&&sidebarVisualizer.source===window.toggleSpectrumSource`),true);
+      await execute(`document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      assert.equal(await execute(`!document.querySelector('#sidebar-visualizer').hidden&&sidebarVisualizer.width>0&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
+      assert.equal(await execute(`document.querySelector('#show-equalizer').getAttribute('aria-pressed')`),'true');
       await execute(`window.originalSpectrumSource=sidebarVisualizer.source;audio.pause();void 0`);
       assert.equal(await execute(`Math.max(...sidebarVisualizer.levels)===0&&sidebarVisualizer.frame===0`),true);
       assert.equal(await execute(`document.querySelector('#sidebar-visualizer').classList.contains('is-playing')`),false);
@@ -186,6 +279,15 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`Boolean(metadataEdit.error)&&!metadataEdit.saving&&!document.querySelector('dialog[open]')`), true);
       await execute(`document.querySelector('.metadata-cancel').click();void 0`);
       assert.equal(await execute(`(async()=>{await writeBatch(db,'playlists',[{id:'one',name:'First',order:0},{id:'two',name:'Second',order:1}]);let aborted=false;try{await transaction(db,'playlists','readwrite',store=>{store.put({id:'one',name:'Changed'});store.put({missingKey:true})})}catch{aborted=true}const values=await all('playlists');return aborted&&values.find(item=>item.id==='one').name==='First'&&values.find(item=>item.id==='two').name==='Second'})()`), true);
+      // Restore the saved preference on a fresh page, and initialize the analyser
+      // when it is first shown during playback that began with it hidden.
+      await execute(`document.querySelector('#show-equalizer').click()`);
+      await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
+      assert.equal(await execute(`document.querySelector('#sidebar-visualizer').hidden&&document.querySelector('#show-equalizer').getAttribute('aria-pressed')==='false'`),true);
+      await execute(`(async()=>{audio.muted=true;audio.loop=true;audio.src=await window.electronAPI.fileUrl(${JSON.stringify(tonePath)});await audio.play()})()`);
+      assert.equal(await execute(`!sidebarVisualizer.context&&!audio.paused`),true);
+      await execute(`document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(sidebarVisualizer.analyser&&sidebarVisualizer.width>0){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Showing the equalizer did not initialize it'))}},10)})`);
+      assert.equal(await execute(`!audio.paused&&sidebarVisualizer.context.state==='running'&&localStorage.getItem('nightwave-show-equalizer')==='true'`),true);
       assert.deepEqual(fatalErrors, []);
       finish();
     } catch (error) { finish(error); }

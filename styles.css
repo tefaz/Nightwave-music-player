@@ -88,15 +88,23 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 .window-controls .window-close { font-size:24px; font-weight:300; }
 .window-controls .window-close:hover { color:#fff; background:#c42b3a; }
 
-/* Keep destructive library maintenance out of the main header flow. */
-.topbar .library-tools { position:relative; -webkit-app-region:no-drag; }
-.library-tools summary { width:28px; color:#a8a29e; font-size:17px; line-height:32px; text-align:center; cursor:pointer; list-style:none; }
-.library-tools summary::-webkit-details-marker { display:none; }
-.library-tools summary:hover,.library-tools[open] summary { color:#fcd34d; }
-.library-tools-menu { position:absolute; z-index:20; top:calc(100% + 7px); right:0; min-width:132px; padding:5px; background:#24201d; border:1px solid #6b5140; border-radius:6px; box-shadow:0 12px 30px rgba(0,0,0,.38); }
-.library-tools-menu button { width:100%; padding:8px 10px; color:#f7c2ba; text-align:left; border-radius:4px; font-size:12px; }
-.library-tools-menu button:hover { color:#fff; background:rgba(239,68,68,.2); }
-.menu-link:disabled { cursor:default; opacity:.45; }
+/* Header dropdowns stay interactive inside the draggable title bar. */
+.topbar .header-menu { position:relative; -webkit-app-region:no-drag; }
+.topbar .menu { align-items:center; gap:6px; }
+.header-menu summary { display:flex; align-items:center; gap:8px; padding:8px 10px; color:#c3c9c1; font-weight:600; border-radius:5px; cursor:pointer; list-style:none; }
+.header-menu summary::-webkit-details-marker { display:none; }
+.header-menu summary::after { content:''; width:5px; height:5px; border:solid currentColor; border-width:0 1px 1px 0; transform:translateY(-2px) rotate(45deg); }
+.header-menu summary:hover,.header-menu[open] summary { color:#fcd34d; background:rgba(251,146,60,.1); }
+.header-menu summary:focus-visible,.header-dropdown button:focus-visible { outline:2px solid #fb923c; outline-offset:2px; }
+.header-dropdown { position:absolute; z-index:20; top:calc(100% + 7px); left:0; min-width:210px; padding:5px; background:#24201d; border:1px solid #6b5140; border-radius:6px; box-shadow:0 12px 30px rgba(0,0,0,.38); }
+.header-dropdown button { display:flex; align-items:center; gap:9px; width:100%; padding:10px 12px; color:var(--text); text-align:left; white-space:nowrap; border-radius:4px; font-size:13px; }
+.header-dropdown button:hover:not(:disabled) { color:#fff; background:rgba(251,146,60,.16); }
+.header-dropdown button:disabled { cursor:default; opacity:.45; }
+.header-dropdown hr { margin:5px 7px; border:0; border-top:1px solid #514137; }
+.header-dropdown button.danger { color:#f7c2ba; }
+.header-dropdown button.danger:hover { background:rgba(239,68,68,.2); }
+.menu-check { width:15px; color:#fcd34d; }
+.header-dropdown button[aria-pressed="false"] .menu-check { visibility:hidden; }
 .folder-dialog { width:min(560px,calc(100vw - 32px)); }
 .folder-list { display:grid; gap:7px; max-height:min(46vh,360px); margin:16px 0 0; padding:0; overflow:auto; list-style:none; }
 .folder-list li { display:flex; align-items:center; gap:10px; padding:8px; background:#171518; border:1px solid #40383a; border-radius:4px; }
@@ -104,12 +112,10 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 .folder-list button { flex:0 0 auto; padding:6px 8px; color:#f7c2ba; font-size:11px; }
 .folder-list button:hover { color:#fff; background:rgba(239,68,68,.2); }
 
-/* The arrow starts a native OS file drag; the rest of the row remains a playlist drag. */
+/* Song rows drag to both playlists and desktop apps; only the options button is needed. */
 .track-header,.track-row { grid-template-columns:minmax(180px,1.7fr) minmax(130px,1fr) minmax(120px,1fr) 64px 54px; }
 .track-actions { display:flex; justify-content:flex-end; gap:2px; }
-.external-drag,.row-menu { width:25px; height:25px; color:#b9a78d; border-radius:4px; }
-.external-drag { cursor:grab; font-size:16px; }
-.external-drag:hover { cursor:grabbing; color:#fff7df; background:rgba(251,146,60,.18); }
+.row-menu { width:25px; height:25px; color:#b9a78d; border-radius:4px; }
 
 /* Keep the open playlist unmistakable, even when the pointer is elsewhere. */
 .playlist-item.selected { color:#fff7df; background:linear-gradient(90deg,rgba(251,191,36,.26),rgba(249,115,22,.19)); box-shadow:inset 3px 0 #fbbf24, inset 0 0 0 1px rgba(251,191,36,.22); }
@@ -154,3 +160,6 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 /* The sidebar spectrum listens to the current audio, with sunset colour bands. */
 .sidebar-foot.spectrum-panel { flex-shrink:0; margin:auto -14px -22px; border-top:0; padding:0; }
 #spectrum-canvas { display:block; width:100%; height:112px; background:radial-gradient(ellipse at 50% 100%,rgba(249,115,22,.08),transparent 75%); }
+
+.volume-icon { display:block; width:24px; height:24px; flex:0 0 24px; }
+.spectrum-panel[hidden] { display:none; }

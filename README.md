@@ -12,8 +12,7 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Search for album covers from each song's menu and save a chosen cover into its MP3
 - Search and sort the music library
 - Create, rename, delete, and reorder playlists
-- Drag songs into playlists
-- Drag a locally loaded song directly onto another desktop app to open its source file there
+- Drag song rows into playlists or onto another desktop app to open their source files there
 - Keep playlist memberships when songs are unloaded and loaded again
 - Edit title, artist, and album tags in MP3 files
 - Show a song in the system file manager
@@ -50,11 +49,14 @@ For normal use, skip the **Run from source** section. Download a release asset f
 
 ## Using Nightwave
 
-1. Choose **Add a music folder** and select the folder containing your music.
+1. Choose **Files → Load folder** and select the folder containing your music. The **Files** menu also contains **Refresh folders**, **Folders**, **Add files**, and **Clear library**.
 2. Create a playlist with the **+** button in the sidebar.
 3. Drag songs from **All music** or one playlist onto another playlist, or use the song options menu. Dragging adds the songs to the destination playlist and keeps them in the original one.
+   You can also drag from anywhere on a locally loaded song row onto another desktop app or a desktop shortcut that accepts audio files. Ctrl/Cmd-click or Shift-click to select several songs and drag them together.
 4. Drag playlist rows in the sidebar to arrange them in the order you prefer.
 5. Double-click a song quickly to play it. To edit a title, artist, or album in an MP3 song row, click the same field twice more slowly: clicks up to 300 ms apart play; clicks more than 300 ms and up to 900 ms apart open an inline editor. Press Enter or click ✓ to save directly to the source MP3; press Escape or click × to cancel. Switching to a view that hides the row cancels an unsaved edit. Ctrl/Cmd-click and Shift-click remain selection gestures.
+
+Choose **View → Show equalizer** to hide or show the visualizer below the playlists. The checkmark shows whether it is visible, and Nightwave remembers this setting between launches. Hiding it leaves music playback running.
 
 Playback keeps the queue you started, even when you filter, sort, or browse another playlist. Shuffle plays each queued song once per cycle, and Previous retraces that order. Folder scans show progress, retain readable songs when a subfolder is unavailable, and reuse metadata for files that have not changed during the current session.
 

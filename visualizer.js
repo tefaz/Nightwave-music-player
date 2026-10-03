@@ -15,12 +15,20 @@ class SidebarVisualizer {
     document.addEventListener('visibilitychange', () => document.hidden ? this.stopDrawing() : this.startDrawing());
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvas);
+    this.visibilityObserver = new MutationObserver(() => {
+      if (this.panel.hidden) this.stopDrawing();
+      else {
+        this.resize();
+        if (!this.audio.paused && !this.audio.ended) this.play();
+      }
+    });
+    this.visibilityObserver.observe(this.panel, { attributes: true, attributeFilter: ['hidden'] });
     window.addEventListener('beforeunload', () => this.dispose(), { once: true });
     this.resize();
   }
 
   async play() {
-    if (this.failed) return;
+    if (this.failed || this.panel.hidden) return;
     try {
       // One source node follows this audio element across track changes. Keep the
       // audible path direct; the analyser only listens on a parallel connection.
@@ -47,6 +55,7 @@ class SidebarVisualizer {
   }
 
   resize() {
+    if (this.panel.hidden) { this.stopDrawing(); return; }
     const { width, height } = this.canvas.getBoundingClientRect();
     this.width = width;
     this.height = height;
@@ -59,7 +68,7 @@ class SidebarVisualizer {
   }
 
   startDrawing() {
-    if (this.frame || this.audio.paused || this.audio.ended || !this.analyser || document.hidden || !this.width) return;
+    if (this.frame || this.panel.hidden || this.audio.paused || this.audio.ended || !this.analyser || document.hidden || !this.width) return;
     this.frame = requestAnimationFrame(time => this.animate(time));
   }
 
@@ -70,7 +79,7 @@ class SidebarVisualizer {
 
   animate(time) {
     this.frame = 0;
-    if (this.audio.paused || this.audio.ended || document.hidden || !this.width) return;
+    if (this.panel.hidden || this.audio.paused || this.audio.ended || document.hidden || !this.width) return;
     // Limit work to 30 fps (10 with reduced motion), with no flashing or pulses.
     if (time - this.lastDraw >= (this.motion.matches ? 100 : 1000 / 30)) {
       this.draw();
@@ -81,7 +90,7 @@ class SidebarVisualizer {
 
   draw() {
     const ctx = this.paint, width = this.width, height = this.height;
-    if (!width || !height) return;
+    if (this.panel.hidden || !width || !height) return;
     const playing = this.analyser && !this.audio.paused && !this.audio.ended;
     if (playing) this.analyser.getByteFrequencyData(this.bins);
     ctx.clearRect(0, 0, width, height);
@@ -135,6 +144,7 @@ class SidebarVisualizer {
   dispose() {
     this.stopDrawing();
     this.resizeObserver.disconnect();
+    this.visibilityObserver.disconnect();
     this.context?.close().catch(() => {});
   }
 }

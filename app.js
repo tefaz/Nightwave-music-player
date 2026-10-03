@@ -65,12 +65,12 @@ function render(){ const editFocus=captureMetadataFocus();const tracks=visibleTr
  $('#playlist-list').innerHTML=state.playlists.map(p=>`<div class="playlist-item ${p.id===state.selected?'selected':''}" data-playlist-row="${escapeHTML(p.id)}" draggable="true" title="Drag to reorder this playlist"><button class="playlist-select" data-playlist="${escapeHTML(p.id)}"${p.id===state.selected?' aria-current="page"':''}><span>☷</span><span>${escapeHTML(p.name)}</span></button><span class="playlist-actions"><button data-rename="${escapeHTML(p.id)}" aria-label="Rename ${escapeHTML(p.name)}">✎</button><button data-delete="${escapeHTML(p.id)}" aria-label="Delete ${escapeHTML(p.name)}">×</button></span></div>`).join('');
  $('#empty-state').hidden=tracks.length>0; $('#track-area').hidden=!tracks.length;
  document.querySelectorAll('[data-sort]').forEach(button=>{const active=button.dataset.sort===state.sort.key;button.classList.toggle('sorted',active);button.querySelector('i').textContent=active?(state.sort.direction==='asc'?'↑':'↓'):''});
- $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to add to a playlist"><div class="title-cell"><div class="mini-art">${artworkMarkup(t.artwork,t.id===state.currentId?'▶':'♫',true)}</div><span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span><span class="track-actions">${t.path&&window.electronAPI?`<button class="external-drag" draggable="true" data-external-drag="${escapeHTML(t.id)}" title="Drag this audio file to another app or your desktop" aria-label="Drag ${escapeHTML(t.title)} to another app">↗</button>`:''}<button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
+ $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to a playlist or another desktop app"><div class="title-cell"><div class="mini-art">${artworkMarkup(t.artwork,t.id===state.currentId?'▶':'♫',true)}</div><span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span><span class="track-actions"><button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
  renderArtwork();
  restoreMetadataEditor(editFocus);
 }
 function escapeHTML(s){return NightwaveCore.escapeHTML(s)}
-async function addTrack(file){ const key=`${file.name}-${file.size}-${file.lastModified}`,metadata=await trackMetadata(file); const existing=state.tracks.find(t=>t.key===key); if(existing){Object.assign(existing,metadata,{file,handle:null});await put('tracks',existing);return} const temp=URL.createObjectURL(file), probe=new Audio(temp); const duration=await new Promise(resolve=>{probe.onloadedmetadata=()=>resolve(probe.duration);probe.onerror=()=>resolve(0)}); URL.revokeObjectURL(temp); const track={id:id(),key,...metadata,duration,handle:null,file}; await put('tracks',track);state.tracks.push(track); }
+async function addTrack(file){ const path=window.electronAPI?.getPathForFile(file)||null; const key=`${file.name}-${file.size}-${file.lastModified}`,metadata=await trackMetadata(file); const existing=state.tracks.find(t=>t.key===key); if(existing){Object.assign(existing,metadata,{path,file,handle:null});await put('tracks',existing);return} const temp=URL.createObjectURL(file), probe=new Audio(temp); const duration=await new Promise(resolve=>{probe.onloadedmetadata=()=>resolve(probe.duration);probe.onerror=()=>resolve(0)}); URL.revokeObjectURL(temp); const track={id:id(),key,...metadata,duration,path,handle:null,file}; await put('tracks',track);state.tracks.push(track); }
 async function addNativeTracks(tracks,showToast=true){
   let added=0;
   const byKey=new Map(state.tracks.map(track=>[track.key,track]));
@@ -121,7 +121,7 @@ function stopPlayback(){
 }
 async function clearLibrary(){
   if(!state.tracks.length){toast('Your library is already empty.');return}
-  document.querySelector('.library-tools[open]')?.removeAttribute('open');
+  closeHeaderMenus();
   if(!await askConfirm(`Unload all ${state.tracks.length} saved music file${state.tracks.length===1?'':'s'}? Your playlists will keep their song assignments when you load these files again.`,'Continue'))return;
   if(!await askConfirm('Final confirmation: this will remove every loaded track from Nightwave. Your source files and playlist assignments will remain unchanged.','Unload all music'))return;
   await writeBatch(db,'tracks',[],[],true);
@@ -296,13 +296,28 @@ async function syncPlaylistToPhone(){const playlist=selectedPlaylist();if(!playl
 $('#load-folder').onclick=$('#empty-load').onclick=loadFolder; $('#add-files').onclick=()=>$('#file-input').click();$('#clear-library').onclick=clearLibrary;$('#show-playing').onclick=showPlayingTrack;$('#sync-playlist').onclick=syncPlaylistToPhone;$('#file-input').onchange=async e=>{await addFiles(e.target.files);e.target.value=''};$('#folder-input').onchange=async e=>{await addFiles(e.target.files);e.target.value=''};$('#new-playlist').onclick=newPlaylist;
 $('#close-lyrics').onclick=()=>{$('#lyrics-panel').hidden=true;$('.app-shell').classList.remove('lyrics-open');lyricsRequestId++};
 $('#refresh-folders').onclick=refreshLoadedFolders;$('#manage-folders').onclick=manageLibraryFolders;
+function closeHeaderMenus(){document.querySelectorAll('.header-menu[open]').forEach(menu=>menu.open=false)}
+document.addEventListener('click',event=>{
+  if(!event.target.closest('.header-menu')||event.target.closest('.header-dropdown button'))closeHeaderMenus();
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape')return;
+  const menu=document.querySelector('.header-menu[open]');if(!menu)return;
+  event.preventDefault();closeHeaderMenus();menu.querySelector('summary').focus();
+});
+function setEqualizerVisible(visible){
+  $('#sidebar-visualizer').hidden=!visible;
+  $('#show-equalizer').setAttribute('aria-pressed',String(visible));
+  localStorage.setItem('nightwave-show-equalizer',String(visible));
+}
+setEqualizerVisible(localStorage.getItem('nightwave-show-equalizer')!=='false');
+$('#show-equalizer').onclick=()=>setEqualizerVisible($('#sidebar-visualizer').hidden);
 const setMaximizeButton=maximized=>{const button=$('#window-maximize');button.textContent=maximized?'❐':'□';button.title=maximized?'Restore':'Maximize';button.setAttribute('aria-label',button.title+' window')};$('#window-minimize').onclick=()=>window.electronAPI?.minimizeWindow();$('#window-maximize').onclick=async()=>setMaximizeButton(await window.electronAPI?.toggleMaximizeWindow());$('#window-close').onclick=()=>window.electronAPI?.closeWindow();window.electronAPI?.onWindowMaximized(setMaximizeButton);
 $('#sidebar-resizer').onpointerdown=e=>{e.preventDefault();const resizer=e.currentTarget;resizer.setPointerCapture(e.pointerId);document.body.classList.add('resizing-sidebar');const resize=event=>{const width=Math.max(sidebarMin,Math.min(sidebarMax,event.clientX));document.documentElement.style.setProperty('--sidebar-width',`${width}px`);localStorage.setItem('nightwave-sidebar-width',width)};const stop=event=>{document.body.classList.remove('resizing-sidebar');resizer.releasePointerCapture(event.pointerId);resizer.removeEventListener('pointermove',resize);resizer.removeEventListener('pointerup',stop);resizer.removeEventListener('pointercancel',stop)};resizer.addEventListener('pointermove',resize);resizer.addEventListener('pointerup',stop);resizer.addEventListener('pointercancel',stop)};
 $('#lyrics-resizer').onpointerdown=e=>{e.preventDefault();const resizer=e.currentTarget;resizer.setPointerCapture(e.pointerId);document.body.classList.add('resizing-lyrics');const resize=event=>{const width=Math.max(lyricsMin,Math.min(lyricsMax,window.innerWidth-event.clientX));document.documentElement.style.setProperty('--lyrics-width',`${width}px`);localStorage.setItem('nightwave-lyrics-width',width)};const stop=event=>{document.body.classList.remove('resizing-lyrics');resizer.releasePointerCapture(event.pointerId);resizer.removeEventListener('pointermove',resize);resizer.removeEventListener('pointerup',stop);resizer.removeEventListener('pointercancel',stop)};resizer.addEventListener('pointermove',resize);resizer.addEventListener('pointerup',stop);resizer.addEventListener('pointercancel',stop)};
 $('#playlist-list').onclick=async e=>{const rename=e.target.closest('[data-rename]');if(rename){await renamePlaylist(rename.dataset.rename);return}const remove=e.target.closest('[data-delete]');if(remove){await deletePlaylist(remove.dataset.delete);return}const b=e.target.closest('[data-playlist]');if(b){state.selected=b.dataset.playlist;state.selectedTrackIds=new Set();state.selectionAnchor=null;render()}};
 $('#track-list').onclick=e=>{
   if(e.target.closest('.inline-metadata-editor'))return;
-  if(e.target.closest('[data-external-drag]')){trackClicks.reset();return}
   const menu=e.target.closest('[data-menu]');if(menu){trackClicks.reset();songMenu(menu.dataset.menu,menu);return}
   const row=e.target.closest('[data-track]');if(!row){trackClicks.reset();return}
   const field=e.target.closest('[data-edit]')?.dataset.edit;
@@ -313,7 +328,19 @@ $('#track-list').onclick=e=>{
 };
 // Both actions are classified from click timing; native dblclick must not trigger a second action.
 $('#track-list').ondblclick=e=>{if(!e.target.closest('.inline-metadata-editor'))e.preventDefault()};
-$('#track-list').ondragstart=e=>{const external=e.target.closest('[data-external-drag]');if(external){const track=state.tracks.find(item=>item.id===external.dataset.externalDrag);if(track?.path&&window.electronAPI){e.preventDefault();window.electronAPI.startExternalDrag(track.path)}return}const row=e.target.closest('[data-track]');if(!row)return;const ids=state.selectedTrackIds.has(row.dataset.track)?[...state.selectedTrackIds]:[row.dataset.track];if(!state.selectedTrackIds.has(row.dataset.track)){state.selectedTrackIds=new Set(ids);state.selectionAnchor=row.dataset.track;paintSelection()}e.dataTransfer.setData('text/plain',JSON.stringify(ids));e.dataTransfer.effectAllowed='copy';row.classList.add('dragging')};
+$('#track-list').ondragstart=e=>{
+  const row=e.target.closest('[data-track]');if(!row)return;
+  if(!row.draggable||e.target.closest('.inline-metadata-editor,[data-menu]')){e.preventDefault();return}
+  trackClicks.reset();
+  const ids=state.selectedTrackIds.has(row.dataset.track)?[...state.selectedTrackIds]:[row.dataset.track];
+  if(!state.selectedTrackIds.has(row.dataset.track)){state.selectedTrackIds=new Set(ids);state.selectionAnchor=row.dataset.track;paintSelection()}
+  const tracks=state.tracks.filter(track=>ids.includes(track.id));
+  // Native drags carry actual files, including when dropped back onto our playlists.
+  if(window.electronAPI&&tracks.length&&tracks.every(track=>track.path)){
+    e.preventDefault();window.electronAPI.startExternalDrag(tracks.map(track=>track.path));return;
+  }
+  e.dataTransfer.setData('text/plain',JSON.stringify(ids));e.dataTransfer.effectAllowed='copy';row.classList.add('dragging');
+};
 $('#track-list').ondragend=e=>{e.target.closest('[data-track]')?.classList.remove('dragging');document.querySelectorAll('.drop-target').forEach(el=>el.classList.remove('drop-target'))};
 $('#playlist-list').ondragstart=e=>{const row=e.target.closest('[data-playlist-row]');if(!row||e.target.closest('.playlist-actions'))return;e.dataTransfer.setData('application/x-nightwave-playlist',row.dataset.playlistRow);e.dataTransfer.effectAllowed='move';row.classList.add('dragging')};
 $('#playlist-list').ondragend=e=>{e.target.closest('[data-playlist-row]')?.classList.remove('dragging');document.querySelectorAll('.drop-target').forEach(el=>el.classList.remove('drop-target'))};
@@ -330,10 +357,15 @@ $('#playlist-list').ondrop=async e=>{
     const updates=reordered.map((item,index)=>({...item,order:index}));
     await writeBatch(db,'playlists',updates);state.playlists=updates;render();toast('Playlist order saved.');return;
   }
-  let trackIds=[];try{trackIds=JSON.parse(e.dataTransfer.getData('text/plain'))}catch{trackIds=[e.dataTransfer.getData('text/plain')]}
+  let trackIds=[];
+  if(e.dataTransfer.files.length&&window.electronAPI){
+    const paths=new Set(Array.from(e.dataTransfer.files,file=>window.electronAPI.getPathForFile(file)));
+    trackIds=state.tracks.filter(track=>track.path&&paths.has(track.path)).map(track=>track.id);
+  }else{try{trackIds=JSON.parse(e.dataTransfer.getData('text/plain'))}catch{trackIds=[e.dataTransfer.getData('text/plain')]}}
   if(!Array.isArray(trackIds)||!trackIds.length)return;
   const playlist=state.playlists.find(p=>p.id===row.dataset.playlistRow);if(!playlist)return;
-  const keys=state.tracks.filter(track=>trackIds.includes(track.id)).map(track=>track.key),added=keys.filter(trackKey=>!playlistTrackKeys(playlist).includes(trackKey));
+  const keys=[...new Set(state.tracks.filter(track=>trackIds.includes(track.id)).map(track=>track.key))];if(!keys.length)return;
+  const added=keys.filter(trackKey=>!playlistTrackKeys(playlist).includes(trackKey));
   if(!added.length){toast('Those tracks are already in this playlist.');return}
   const updated={...playlist,trackKeys:[...playlistTrackKeys(playlist),...added]};
   await put('playlists',updated);Object.assign(playlist,updated);toast(`${added.length} track${added.length===1?'':'s'} added to ${playlist.name}`);
