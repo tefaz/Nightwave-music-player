@@ -29,6 +29,9 @@
           <details id="view-menu" class="header-menu" name="header-menu">
             <summary>View</summary>
             <div class="header-dropdown" aria-label="View options">
+              <button id="view-library" type="button" aria-pressed="true"><span class="menu-check" aria-hidden="true">✓</span>Library</button>
+              <button id="view-visualizer" type="button" aria-pressed="false"><span class="menu-check" aria-hidden="true">✓</span>Visualizer</button>
+              <hr />
               <button id="show-equalizer" type="button" aria-pressed="true"><span class="menu-check" aria-hidden="true">✓</span>Show equalizer</button>
             </div>
           </details>
@@ -71,6 +74,13 @@
         <pre id="lyrics-text" class="lyrics-text" hidden></pre>
         <p id="lyrics-credit" class="lyrics-credit" hidden>Lyrics provided by LRCLIB.</p>
       </aside>
+
+      <section id="tunnel-visualizer" class="tunnel-panel" aria-label="Music visualizer" hidden>
+        <canvas id="tunnel-canvas" aria-hidden="true"></canvas>
+        <div class="tunnel-toolbar"><span id="visualizer-name" aria-live="polite">Space tunnel</span><button id="visualizer-library" type="button">Back to library</button></div>
+        <button id="visualizer-next" class="visualizer-next" type="button" aria-label="Next visualizer" title="Next visualizer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></button>
+        <p class="tunnel-idle" id="tunnel-idle">Play a song to bring the visuals to life</p>
+      </section>
 
       <footer class="player">
         <div class="now-playing"><div id="artwork" class="artwork">♫</div><div class="song-text"><strong id="now-title">Nothing playing</strong><span id="now-artist">Choose a track from your library</span></div></div>

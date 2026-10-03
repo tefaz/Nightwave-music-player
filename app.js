@@ -4,7 +4,7 @@ const { transaction, writeBatch, PlaybackQueue, TrackClicks } = NightwaveCore;
 const playbackQueue = new PlaybackQueue();
 const trackClicks = new TrackClicks();
 let playbackRequest = 0, scanning = false;
-let metadataEdit = null;
+let metadataEdit = null, renderingTracks = false;
 const savedLibraryFolders=(()=>{try{const folders=JSON.parse(localStorage.getItem('nightwave-library-folders')||'[]');return Array.isArray(folders)?folders.filter(folder=>typeof folder==='string'&&folder):[]}catch{return []}})();
 let db, state = { tracks: [], playlists: [], selected: 'all', currentId: null, shuffle: false, repeat: false, objectUrl: null, query: '', sort: { key: 'artist', direction: 'asc' }, selectedTrackIds: new Set(), selectionAnchor: null, libraryFolders: savedLibraryFolders };
 const metadataParser = import('./vendor/music-metadata.bundle.mjs').then(module=>module.parseBlob).catch(()=>null);
@@ -61,13 +61,14 @@ const playlistTrackKeys = playlist => playlist.trackKeys || [];
 function visibleTracks(){ const p=state.playlists.find(p=>p.id===state.selected); let tracks=p ? state.tracks.filter(t=>playlistTrackKeys(p).includes(t.key)) : [...state.tracks]; const query=state.query.trim().toLowerCase(); if(query)tracks=tracks.filter(t=>[t.title,t.artist,t.album].some(value=>(value||'').toLowerCase().includes(query))); if(state.sort.key){const {key,direction}=state.sort;tracks.sort((a,b)=>{const one=key==='duration'?(a[key]||0):(a[key]||'').toLowerCase(),two=key==='duration'?(b[key]||0):(b[key]||'').toLowerCase();return (one>two?1:one<two?-1:0)*(direction==='asc'?1:-1)});} return tracks; }
 function selectedPlaylist(){ return state.playlists.find(p=>p.id===state.selected); }
 
-function render(){ const editFocus=captureMetadataFocus();const tracks=visibleTracks(), playlist=selectedPlaylist(); $('#track-count').textContent=state.tracks.length; const canRefresh=Boolean(window.electronAPI&&state.libraryFolders.length);$('#refresh-folders').disabled=scanning||!canRefresh;$('#manage-folders').disabled=scanning||!canRefresh; $('.nav-item').classList.toggle('active',state.selected==='all'); $('#view-title').textContent=playlist?.name || 'All music'; $('#view-kicker').textContent=playlist ? 'PLAYLIST' : 'LIBRARY'; $('#view-subtitle').textContent=tracks.length ? `${tracks.length} ${tracks.length===1?'track':'tracks'}${state.query?' matching filter':''} · saved to this device` : state.query ? 'No songs match this filter.' : playlist ? 'No tracks in this playlist yet.' : 'Your saved collection will appear here.'; $('#play-all').style.visibility=tracks.length?'visible':'hidden'; $('#sync-playlist').hidden=!playlist||!tracks.length; $('#show-playing').disabled=!state.currentId;
+function render(){ renderingTracks=true;try{const editFocus=captureMetadataFocus();const tracks=visibleTracks(), playlist=selectedPlaylist(); $('#track-count').textContent=state.tracks.length; const canRefresh=Boolean(window.electronAPI&&state.libraryFolders.length);$('#refresh-folders').disabled=scanning||!canRefresh;$('#manage-folders').disabled=scanning||!canRefresh; $('.nav-item').classList.toggle('active',state.selected==='all'); $('#view-title').textContent=playlist?.name || 'All music'; $('#view-kicker').textContent=playlist ? 'PLAYLIST' : 'LIBRARY'; $('#view-subtitle').textContent=tracks.length ? `${tracks.length} ${tracks.length===1?'track':'tracks'}${state.query?' matching filter':''} · saved to this device` : state.query ? 'No songs match this filter.' : playlist ? 'No tracks in this playlist yet.' : 'Your saved collection will appear here.'; $('#play-all').style.visibility=tracks.length?'visible':'hidden'; $('#sync-playlist').hidden=!playlist||!tracks.length; $('#show-playing').disabled=!state.currentId;
  $('#playlist-list').innerHTML=state.playlists.map(p=>`<div class="playlist-item ${p.id===state.selected?'selected':''}" data-playlist-row="${escapeHTML(p.id)}" draggable="true" title="Drag to reorder this playlist"><button class="playlist-select" data-playlist="${escapeHTML(p.id)}"${p.id===state.selected?' aria-current="page"':''}><span>☷</span><span>${escapeHTML(p.name)}</span></button><span class="playlist-actions"><button data-rename="${escapeHTML(p.id)}" aria-label="Rename ${escapeHTML(p.name)}">✎</button><button data-delete="${escapeHTML(p.id)}" aria-label="Delete ${escapeHTML(p.name)}">×</button></span></div>`).join('');
  $('#empty-state').hidden=tracks.length>0; $('#track-area').hidden=!tracks.length;
  document.querySelectorAll('[data-sort]').forEach(button=>{const active=button.dataset.sort===state.sort.key;button.classList.toggle('sorted',active);button.querySelector('i').textContent=active?(state.sort.direction==='asc'?'↑':'↓'):''});
  $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to a playlist or another desktop app"><div class="title-cell"><div class="mini-art">${artworkMarkup(t.artwork,t.id===state.currentId?'▶':'♫',true)}</div><span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span><span class="track-actions"><button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
  renderArtwork();
  restoreMetadataEditor(editFocus);
+ }finally{renderingTracks=false}
 }
 function escapeHTML(s){return NightwaveCore.escapeHTML(s)}
 async function addTrack(file){ const path=window.electronAPI?.getPathForFile(file)||null; const key=`${file.name}-${file.size}-${file.lastModified}`,metadata=await trackMetadata(file); const existing=state.tracks.find(t=>t.key===key); if(existing){Object.assign(existing,metadata,{path,file,handle:null});await put('tracks',existing);return} const temp=URL.createObjectURL(file), probe=new Audio(temp); const duration=await new Promise(resolve=>{probe.onloadedmetadata=()=>resolve(probe.duration);probe.onerror=()=>resolve(0)}); URL.revokeObjectURL(temp); const track={id:id(),key,...metadata,duration,path,handle:null,file}; await put('tracks',track);state.tracks.push(track); }
@@ -179,24 +180,21 @@ function captureMetadataFocus(){
 function restoreMetadataEditor(focus=null){
   const edit=metadataEdit;if(!edit)return;
   const row=[...document.querySelectorAll('#track-list [data-track]')].find(element=>element.dataset.track===edit.trackId);
-  if(!row){if(!edit.saving)metadataEdit=null;return}
+  if(!row)return
   const cell=row.querySelector(`[data-edit="${edit.field}"]`);if(!cell)return;
   const editor=document.createElement('span');editor.className='inline-metadata-editor';
   editor.ondragstart=event=>event.stopPropagation();
   const input=document.createElement('input');input.className='metadata-input';input.type='text';input.value=edit.value;input.maxLength=10000;
   input.dataset.metadataControl='input';input.setAttribute('aria-label',`Edit ${edit.field}`);input.disabled=edit.saving;input.setAttribute('aria-invalid',String(Boolean(edit.error)));
-  input.oninput=()=>{edit.value=input.value;edit.error='';input.setAttribute('aria-invalid','false');status.textContent='Edits the source MP3 · Enter to save · Esc to cancel'};
-  const save=document.createElement('button');save.type='button';save.textContent='✓';save.className='metadata-save';save.dataset.metadataControl='save';save.disabled=edit.saving;
-  save.title='Save to source MP3';save.setAttribute('aria-label',`Save ${edit.field} to source MP3`);save.onclick=saveMetadataEdit;
-  const cancel=document.createElement('button');cancel.type='button';cancel.textContent='×';cancel.className='metadata-cancel';cancel.dataset.metadataControl='cancel';cancel.disabled=edit.saving;
-  cancel.title='Cancel edit';cancel.setAttribute('aria-label','Cancel metadata edit');cancel.onclick=cancelMetadataEdit;
+  input.title=edit.error||'';
+  input.oninput=()=>{edit.value=input.value;edit.error='';input.title='';input.setAttribute('aria-invalid','false')};
+  input.onblur=()=>{if(!renderingTracks&&input.isConnected&&metadataEdit===edit&&!edit.saving)saveMetadataEdit()};
   editor.onkeydown=event=>{
     event.stopPropagation();if(event.isComposing)return;
     if(event.key==='Escape'){event.preventDefault();cancelMetadataEdit()}
     else if(event.key==='Enter'&&event.target===input){event.preventDefault();saveMetadataEdit()}
   };
-  const status=document.createElement('span');status.className='metadata-edit-status';status.setAttribute('role','status');status.textContent=edit.saving?'Saving to source MP3…':edit.error||'Edits the source MP3 · Enter to save · Esc to cancel';
-  editor.append(input,save,cancel);cell.replaceChildren(editor);cell.classList.add('metadata-editing');row.draggable=false;row.append(status);
+  editor.append(input);cell.replaceChildren(editor);cell.classList.add('metadata-editing');row.draggable=false;
   if(focus&&!edit.saving){
     const target=editor.querySelector(`[data-metadata-control="${focus.control}"]`);target?.focus({preventScroll:true});
     if(target===input&&focus.start!=null)input.setSelectionRange(focus.start,focus.end);
@@ -214,7 +212,8 @@ async function saveMetadataEdit(){
   const edit=metadataEdit;if(!edit||edit.saving)return;
   const track=state.tracks.find(item=>item.id===edit.trackId);if(!track){cancelMetadataEdit();return}
   const value=edit.value.trim();if(value===(track[edit.field]||'')){cancelMetadataEdit();return}
-  edit.saving=true;edit.error='';render();
+  edit.saving=true;edit.error='';
+  const input=$('#track-list .metadata-input');if(input){input.disabled=true;input.setAttribute('aria-invalid','false')}
   try{
     const updated=await window.electronAPI.writeTags({filePath:track.path,title:track.title,artist:track.artist,album:track.album,[edit.field]:value});
     // Unloading a track during a write must not add it back to the saved library.
@@ -224,7 +223,7 @@ async function saveMetadataEdit(){
     if(metadataEdit===edit)metadataEdit=null;render();toast(`${{title:'Title',artist:'Artist',album:'Album'}[edit.field]} updated.`);
   }catch(error){
     if(metadataEdit!==edit)return;edit.saving=false;edit.error=error.message||'Could not save this tag. Please try again.';
-    render();$('#track-list .metadata-input')?.focus({preventScroll:true});
+    render();toast(edit.error);$('#track-list .metadata-input')?.focus({preventScroll:true});
   }
 }
 async function addToPlaylist(trackId){const track=state.tracks.find(item=>item.id===trackId);if(!track)return;if(!state.playlists.length){await newPlaylist();if(!state.playlists.length)return} const name=await askText(`Add to playlist (${state.playlists.map((p,i)=>`${i+1}: ${p.name}`).join(' · ')})`);const p=state.playlists.find(p=>p.name.toLowerCase()===name?.toLowerCase())||state.playlists[Number(name)-1];if(!p){if(name)toast('Playlist not found.');return}if(!playlistTrackKeys(p).includes(track.key)){p.trackKeys=[...playlistTrackKeys(p),track.key];await put('playlists',p);toast('Added to '+p.name)}}
@@ -289,7 +288,7 @@ let lyricsRequestId=0;
 async function openLyrics(track){const panel=$('#lyrics-panel'),requestId=++lyricsRequestId;panel.hidden=false;$('.app-shell').classList.add('lyrics-open');$('#lyrics-title').textContent=track.title;$('#lyrics-artist').textContent=track.artist||'Unknown artist';$('#lyrics-status').textContent='Searching for lyrics…';$('#lyrics-text').hidden=true;$('#lyrics-text').textContent='';$('#lyrics-credit').hidden=true;if(!window.electronAPI?.findLyrics){$('#lyrics-status').textContent='Lyrics are available in the desktop app.';return}const result=await window.electronAPI.findLyrics({title:track.title,artist:track.artist,album:track.album,duration:track.duration});if(requestId!==lyricsRequestId)return;if(result.status==='found'){if(result.title!==track.title||result.artist!==track.artist)$('#lyrics-status').textContent=`Found: ${result.title} — ${result.artist}`;else $('#lyrics-status').textContent='';$('#lyrics-text').textContent=result.lyrics;$('#lyrics-text').hidden=false;$('#lyrics-credit').hidden=false}else $('#lyrics-status').textContent=result.status==='not-found'?'No lyrics were found for this song.':'Lyrics could not be reached. Check your internet connection and try again.'}
 function paintSelection(){document.querySelectorAll('#track-list [data-track]').forEach(row=>row.classList.toggle('selected-track',state.selectedTrackIds.has(row.dataset.track)))}
 function selectTracks(trackId,event){const tracks=visibleTracks(),ids=tracks.map(track=>track.id);if(event.shiftKey&&state.selectionAnchor){const start=ids.indexOf(state.selectionAnchor),end=ids.indexOf(trackId);if(start>=0&&end>=0)state.selectedTrackIds=new Set(ids.slice(Math.min(start,end),Math.max(start,end)+1));}else if(event.ctrlKey||event.metaKey){if(state.selectedTrackIds.has(trackId))state.selectedTrackIds.delete(trackId);else state.selectedTrackIds.add(trackId);state.selectedTrackIds=new Set(state.selectedTrackIds);state.selectionAnchor=trackId;}else{state.selectedTrackIds=new Set([trackId]);state.selectionAnchor=trackId;}paintSelection();}
-function showPlayingTrack(){if(!state.currentId){toast('Nothing is playing.');return}const track=state.tracks.find(item=>item.id===state.currentId),playlist=selectedPlaylist();if(!track){toast('The playing track is no longer in your library.');return}if(playlist&&!playlistTrackKeys(playlist).includes(track.key))state.selected='all';state.query='';$('#search').value='';state.selectedTrackIds=new Set([state.currentId]);state.selectionAnchor=state.currentId;render();requestAnimationFrame(()=>document.querySelector(`#track-list [data-track="${state.currentId}"]`)?.scrollIntoView({behavior:'smooth',block:'center'}));}
+function showPlayingTrack(){if(!state.currentId){toast('Nothing is playing.');return}const track=state.tracks.find(item=>item.id===state.currentId),playlist=selectedPlaylist();if(!track){toast('The playing track is no longer in your library.');return}setAppView('library');if(playlist&&!playlistTrackKeys(playlist).includes(track.key))state.selected='all';state.query='';$('#search').value='';state.selectedTrackIds=new Set([state.currentId]);state.selectionAnchor=state.currentId;render();requestAnimationFrame(()=>document.querySelector(`#track-list [data-track="${state.currentId}"]`)?.scrollIntoView({behavior:'smooth',block:'center'}));}
 function showSyncProgress(total){const panel=document.createElement('div'),title=document.createElement('strong'),detail=document.createElement('span'),bar=document.createElement('progress');panel.className='sync-progress';panel.setAttribute('role','status');panel.setAttribute('aria-live','polite');title.textContent='Syncing to phone';detail.textContent=`Preparing ${total} track${total===1?'':'s'}…`;bar.max=total;bar.value=0;panel.append(title,detail,bar);document.body.append(panel);return {update:({completed,fileName})=>{bar.value=completed;detail.textContent=`${Math.min(completed+1,total)} of ${total} · ${fileName}`},remove:()=>panel.remove()}}
 async function syncPlaylistToPhone(){const playlist=selectedPlaylist();if(!playlist)return;const tracks=state.tracks.filter(track=>playlistTrackKeys(playlist).includes(track.key)&&track.path);if(!tracks.length){toast('This playlist has no tracks available to sync. Load its music from a folder first.');return}if(!await askConfirm(`Copy ${tracks.length} track${tracks.length===1?'':'s'} from “${playlist.name}” to a matching folder in your phone’s Music directory? Songs use distinct filenames, and verified existing copies are skipped. Older copies made by previous versions are kept.`,'Sync to phone'))return;const button=$('#sync-playlist'),progress=showSyncProgress(tracks.length);button.disabled=true;button.querySelector('span').textContent='Syncing…';try{const result=await window.electronAPI.syncToPhone({filePaths:tracks.map(track=>track.path),playlistName:playlist.name},progress.update);const summary=`${result.copied} copied${result.skipped?`, ${result.skipped} already on phone`:''}${result.failed.length?`, ${result.failed.length} failed`:''}.`;toast(summary);if(result.failed.length)console.warn('Phone sync failures:',result.failed)}catch(error){toast(error.message||'Could not sync to the phone.')}finally{progress.remove();button.disabled=false;button.querySelector('span').textContent='Sync to phone'}}
 
@@ -302,20 +301,41 @@ document.addEventListener('click',event=>{
 });
 document.addEventListener('keydown',event=>{
   if(event.key!=='Escape')return;
-  const menu=document.querySelector('.header-menu[open]');if(!menu)return;
-  event.preventDefault();closeHeaderMenus();menu.querySelector('summary').focus();
+  const menu=document.querySelector('.header-menu[open]');
+  if(menu){event.preventDefault();closeHeaderMenus();menu.querySelector('summary').focus();return}
+  if($('.app-shell').classList.contains('visualizer-view')&&!document.querySelector('dialog[open]')&&!event.target.closest?.('input,textarea,[contenteditable]')){
+    event.preventDefault();setAppView('library');$('#view-menu summary').focus();
+  }
 });
 function setEqualizerVisible(visible){
-  $('#sidebar-visualizer').hidden=!visible;
+  $('#sidebar-visualizer').hidden=!visible||$('.app-shell').classList.contains('visualizer-view');
   $('#show-equalizer').setAttribute('aria-pressed',String(visible));
   localStorage.setItem('nightwave-show-equalizer',String(visible));
 }
 setEqualizerVisible(localStorage.getItem('nightwave-show-equalizer')!=='false');
-$('#show-equalizer').onclick=()=>setEqualizerVisible($('#sidebar-visualizer').hidden);
+$('#show-equalizer').onclick=()=>setEqualizerVisible($('#show-equalizer').getAttribute('aria-pressed')!=='true');
+function setAppView(view){
+  const visualizer=view==='visualizer';
+  $('.app-shell').classList.toggle('visualizer-view',visualizer);
+  $('.sidebar').hidden=visualizer;$('.main-content').hidden=visualizer;
+  $('#tunnel-visualizer').hidden=!visualizer;
+  $('#view-library').setAttribute('aria-pressed',String(!visualizer));
+  $('#view-visualizer').setAttribute('aria-pressed',String(visualizer));
+  $('#show-equalizer').disabled=visualizer;
+  setEqualizerVisible(localStorage.getItem('nightwave-show-equalizer')!=='false');
+  localStorage.setItem('nightwave-view',visualizer?'visualizer':'library');
+}
+$('#view-library').onclick=$('#visualizer-library').onclick=()=>setAppView('library');
+$('#view-visualizer').onclick=()=>setAppView('visualizer');
+setAppView(localStorage.getItem('nightwave-view')==='visualizer'?'visualizer':'library');
 const setMaximizeButton=maximized=>{const button=$('#window-maximize');button.textContent=maximized?'❐':'□';button.title=maximized?'Restore':'Maximize';button.setAttribute('aria-label',button.title+' window')};$('#window-minimize').onclick=()=>window.electronAPI?.minimizeWindow();$('#window-maximize').onclick=async()=>setMaximizeButton(await window.electronAPI?.toggleMaximizeWindow());$('#window-close').onclick=()=>window.electronAPI?.closeWindow();window.electronAPI?.onWindowMaximized(setMaximizeButton);
 $('#sidebar-resizer').onpointerdown=e=>{e.preventDefault();const resizer=e.currentTarget;resizer.setPointerCapture(e.pointerId);document.body.classList.add('resizing-sidebar');const resize=event=>{const width=Math.max(sidebarMin,Math.min(sidebarMax,event.clientX));document.documentElement.style.setProperty('--sidebar-width',`${width}px`);localStorage.setItem('nightwave-sidebar-width',width)};const stop=event=>{document.body.classList.remove('resizing-sidebar');resizer.releasePointerCapture(event.pointerId);resizer.removeEventListener('pointermove',resize);resizer.removeEventListener('pointerup',stop);resizer.removeEventListener('pointercancel',stop)};resizer.addEventListener('pointermove',resize);resizer.addEventListener('pointerup',stop);resizer.addEventListener('pointercancel',stop)};
 $('#lyrics-resizer').onpointerdown=e=>{e.preventDefault();const resizer=e.currentTarget;resizer.setPointerCapture(e.pointerId);document.body.classList.add('resizing-lyrics');const resize=event=>{const width=Math.max(lyricsMin,Math.min(lyricsMax,window.innerWidth-event.clientX));document.documentElement.style.setProperty('--lyrics-width',`${width}px`);localStorage.setItem('nightwave-lyrics-width',width)};const stop=event=>{document.body.classList.remove('resizing-lyrics');resizer.releasePointerCapture(event.pointerId);resizer.removeEventListener('pointermove',resize);resizer.removeEventListener('pointerup',stop);resizer.removeEventListener('pointercancel',stop)};resizer.addEventListener('pointermove',resize);resizer.addEventListener('pointerup',stop);resizer.addEventListener('pointercancel',stop)};
 $('#playlist-list').onclick=async e=>{const rename=e.target.closest('[data-rename]');if(rename){await renamePlaylist(rename.dataset.rename);return}const remove=e.target.closest('[data-delete]');if(remove){await deletePlaylist(remove.dataset.delete);return}const b=e.target.closest('[data-playlist]');if(b){state.selected=b.dataset.playlist;state.selectedTrackIds=new Set();state.selectionAnchor=null;render()}};
+// Save before another row or navigation action can hide the active field.
+document.addEventListener('click',event=>{
+  if(metadataEdit&&!metadataEdit.saving&&!event.target.closest('.inline-metadata-editor'))saveMetadataEdit();
+},true);
 $('#track-list').onclick=e=>{
   if(e.target.closest('.inline-metadata-editor'))return;
   const menu=e.target.closest('[data-menu]');if(menu){trackClicks.reset();songMenu(menu.dataset.menu,menu);return}

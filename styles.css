@@ -77,6 +77,7 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 .sync-progress { position:fixed; z-index:30; right:28px; bottom:150px; width:min(340px,calc(100vw - 32px)); display:grid; gap:7px; padding:14px 16px; color:#fff7df; background:#24201d; border:1px solid #a65b2b; border-radius:7px; box-shadow:0 16px 40px rgba(0,0,0,.45); }
 .sync-progress strong { color:#fcd34d; font-size:13px; }.sync-progress span { overflow:hidden; color:#d8c5af; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }.sync-progress progress { width:100%; height:8px; accent-color:#fb923c; }
 .volume input[type=range] { background:linear-gradient(to right,#facc15 0%,#fb923c var(--value,0%),#3b3a40 var(--value,0%),#3b3a40 100%); }
+.volume-icon { display:block; width:24px; height:24px; flex:0 0 24px; }
 .playlist-item[draggable="true"] { cursor:grab; }.playlist-item[draggable="true"].dragging { cursor:grabbing; opacity:.5; }
 
 /* Custom title bar for the frameless Electron window. */
@@ -125,13 +126,10 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 .track-title.metadata-editing { flex:1; }
 .metadata-editing[data-edit],.metadata-editing[data-edit]:hover { min-width:0; overflow:visible; text-decoration:none; }
 .inline-metadata-editor { display:flex; align-items:center; gap:4px; min-width:0; width:100%; }
-.metadata-input { flex:1; width:100%; min-width:0; padding:4px 6px; color:var(--text); background:#171416; border:1px solid #fb923c; border-radius:4px; font:inherit; outline:none; }
+.metadata-input { flex:1; width:100%; min-width:0; height:26px; padding:3px 6px; color:var(--text); background:#171416; border:1px solid #fb923c; border-radius:4px; font:inherit; outline:none; }
 .metadata-input:focus { box-shadow:0 0 0 2px rgba(251,146,60,.2); }
 .metadata-input[aria-invalid=true] { border-color:#ef4444; }
-.metadata-save,.metadata-cancel { flex:0 0 24px; width:24px; height:26px; padding:0; border-radius:4px; color:#fff7df; background:rgba(251,146,60,.16); font-size:16px; }
-.metadata-save:hover,.metadata-cancel:hover { background:rgba(251,146,60,.3); }
 .inline-metadata-editor :disabled { opacity:.6; cursor:wait; }
-.metadata-edit-status { grid-column:1 / -1; color:var(--muted); font-size:11px; white-space:normal; }
 
 /* Embedded covers retain the compact row and player artwork dimensions. */
 .mini-art,.artwork { position:relative; overflow:hidden; }
@@ -159,7 +157,21 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
 
 /* The sidebar spectrum listens to the current audio, with sunset colour bands. */
 .sidebar-foot.spectrum-panel { flex-shrink:0; margin:auto -14px -22px; border-top:0; padding:0; }
+.spectrum-panel[hidden] { display:none; }
 #spectrum-canvas { display:block; width:100%; height:112px; background:radial-gradient(ellipse at 50% 100%,rgba(249,115,22,.08),transparent 75%); }
 
-.volume-icon { display:block; width:24px; height:24px; flex:0 0 24px; }
-.spectrum-panel[hidden] { display:none; }
+/* The space visualizer replaces the library while keeping transport controls available. */
+.app-shell.visualizer-view { grid-template-columns:minmax(0,1fr); }
+.app-shell.visualizer-view .lyrics-panel,.sidebar[hidden],.main-content[hidden],.tunnel-panel[hidden] { display:none; }
+.tunnel-panel { grid-column:1/-1; grid-row:2; position:relative; min-width:0; min-height:0; overflow:hidden; background:#03020e; }
+#tunnel-canvas { display:block; width:100%; height:100%; }
+.tunnel-toolbar { position:absolute; top:24px; left:28px; right:28px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.tunnel-toolbar>span { color:rgba(233,226,255,.65); font:11px 'DM Mono',monospace; letter-spacing:3px; text-transform:uppercase; text-shadow:0 2px 10px #000; }
+.tunnel-toolbar button { padding:9px 14px; color:#eee8ff; border:1px solid rgba(204,185,255,.25); border-radius:6px; background:rgba(12,7,29,.65); font-size:12px; }
+.tunnel-toolbar button:hover { color:#fff; border-color:rgba(204,185,255,.6); background:rgba(39,19,67,.8); }
+.tunnel-toolbar button:focus-visible { outline:2px solid #fb923c; outline-offset:3px; }
+.tunnel-idle { position:absolute; bottom:24px; left:20px; right:20px; margin:0; color:rgba(234,225,255,.65); text-align:center; font-size:12px; text-shadow:0 2px 12px #000; pointer-events:none; }
+.tunnel-idle[hidden] { display:none; }
+.visualizer-next { position:absolute; top:50%; right:26px; transform:translateY(-50%); display:grid; place-items:center; width:48px; height:48px; padding:0; color:#eee8ff; background:rgba(12,7,29,.7); border:1px solid rgba(204,185,255,.35); border-radius:50%; box-shadow:0 4px 22px rgba(0,0,0,.3); }
+.visualizer-next:hover { color:#fff; background:rgba(51,27,85,.85); border-color:rgba(204,185,255,.75); box-shadow:0 0 22px rgba(145,94,255,.22); }
+.visualizer-next:focus-visible { outline:2px solid #fb923c; outline-offset:4px; }

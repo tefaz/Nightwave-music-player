@@ -42,7 +42,7 @@ function finish(error) {
   if (finished) return;finished = true;clearTimeout(timeout);
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
   if (error) { console.error(error); if(fatalErrors.length)console.error('Renderer errors:',fatalErrors); }
-  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, saved equalizer visibility, embedded artwork, progress alignment, click timing, IndexedDB rollback).');
+  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, three main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, progress alignment, click timing, IndexedDB rollback).');
   // Only remove this runner's validated mkdtemp directory.
   fs.rmSync(temporary, { recursive: true, force: true });
   app.exit(error ? 1 : 0);
@@ -60,6 +60,26 @@ app.on('browser-window-created', (_event, window) => {
       // Wait until the actual app has finished opening its database.
       await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(db){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Database unavailable'))}},20)})`);
       assert.equal(await execute(`Boolean(window.electronAPI && NightwaveCore)`), true);
+      // Header menus must be clickable in the draggable title bar, exclusive,
+      // dismissible, and still connected to the existing file input action.
+      assert.deepEqual(await execute(`Array.from(document.querySelectorAll('#files-menu button'),button=>button.id)`),['load-folder','refresh-folders','manage-folders','add-files','clear-library']);
+      assert.equal(await execute(`getComputedStyle(document.querySelector('#files-menu')).webkitAppRegion`),'no-drag');
+      await execute(`document.querySelector('#files-menu summary').click()`);
+      assert.equal(await execute(`document.querySelector('#files-menu').open&&document.querySelector('#load-folder').getBoundingClientRect().height>0`),true);
+      await execute(`document.querySelector('#view-menu summary').click()`);
+      assert.equal(await execute(`!document.querySelector('#files-menu').open&&document.querySelector('#view-menu').open`),true);
+      await execute(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`);
+      assert.equal(await execute(`!document.querySelector('#view-menu').open&&document.activeElement===document.querySelector('#view-menu summary')`),true);
+      await execute(`document.querySelector('#files-menu summary').click();document.querySelector('.content-head').click()`);
+      assert.equal(await execute(`Boolean(document.querySelector('.header-menu[open]'))`),false);
+      await execute(`document.querySelector('#file-input').addEventListener('click',event=>{event.preventDefault();window.filePickerClicked=true},{once:true});document.querySelector('#files-menu summary').click();document.querySelector('#add-files').click()`);
+      assert.equal(await execute(`window.filePickerClicked&&!document.querySelector('#files-menu').open`),true);
+      const title = 'Song "Live" <img src=x onerror="window.injected=true">';
+      await execute(`state.tracks=[{id:'test-track',key:${JSON.stringify(audioPath)},path:${JSON.stringify(audioPath)},title:${JSON.stringify(title)},artist:'Artist',album:'Album',duration:1}];render();audio.muted=true;`);
+      assert.equal(await execute(`document.querySelector('.track-title').textContent`), title);
+      assert.equal(await execute(`Boolean(document.querySelector('.external-drag'))`), false);
+      assert.equal(await execute(`document.querySelector('.track-row').title.includes('Drag to a playlist or another desktop app')`), true);
+      assert.equal(await execute(`Boolean(document.querySelector('#track-list img') || window.injected)`), false);
       // Keep the real preload + IPC + file validation, replacing only the OS drag
       // call, which needs an interactive desktop. Exercise every part of the row.
       const nativeDrags=[], originalStartDrag=window.webContents.startDrag;
@@ -129,26 +149,6 @@ app.on('browser-window-created', (_event, window) => {
       assert.deepEqual(await execute(`state.playlists.map(p=>p.id)`),['other-playlist','drag-playlist']);
       window.webContents.startDrag=originalStartDrag;
       await execute(`state.tracks=state.tracks.filter(t=>t.id==='test-track');state.playlists=[];state.selectedTrackIds=new Set();render()`);
-      // Header menus must be clickable in the draggable title bar, exclusive,
-      // dismissible, and still connected to the existing file input action.
-      assert.deepEqual(await execute(`Array.from(document.querySelectorAll('#files-menu button'),button=>button.id)`),['load-folder','refresh-folders','manage-folders','add-files','clear-library']);
-      assert.equal(await execute(`getComputedStyle(document.querySelector('#files-menu')).webkitAppRegion`),'no-drag');
-      await execute(`document.querySelector('#files-menu summary').click()`);
-      assert.equal(await execute(`document.querySelector('#files-menu').open&&document.querySelector('#load-folder').getBoundingClientRect().height>0`),true);
-      await execute(`document.querySelector('#view-menu summary').click()`);
-      assert.equal(await execute(`!document.querySelector('#files-menu').open&&document.querySelector('#view-menu').open`),true);
-      await execute(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`);
-      assert.equal(await execute(`!document.querySelector('#view-menu').open&&document.activeElement===document.querySelector('#view-menu summary')`),true);
-      await execute(`document.querySelector('#files-menu summary').click();document.querySelector('.content-head').click()`);
-      assert.equal(await execute(`Boolean(document.querySelector('.header-menu[open]'))`),false);
-      await execute(`document.querySelector('#file-input').addEventListener('click',event=>{event.preventDefault();window.filePickerClicked=true},{once:true});document.querySelector('#files-menu summary').click();document.querySelector('#add-files').click()`);
-      assert.equal(await execute(`window.filePickerClicked&&!document.querySelector('#files-menu').open`),true);
-      const title = 'Song "Live" <img src=x onerror="window.injected=true">';
-      await execute(`state.tracks=[{id:'test-track',key:${JSON.stringify(audioPath)},path:${JSON.stringify(audioPath)},title:${JSON.stringify(title)},artist:'Artist',album:'Album',duration:1}];render();audio.muted=true;`);
-      assert.equal(await execute(`document.querySelector('.track-title').textContent`), title);
-      assert.equal(await execute(`Boolean(document.querySelector('.external-drag'))`), false);
-      assert.equal(await execute(`document.querySelector('.track-row').title.includes('Drag to a playlist or another desktop app')`), true);
-      assert.equal(await execute(`Boolean(document.querySelector('#track-list img') || window.injected)`), false);
       const artworkTrack=await execute(`window.electronAPI.readTrack(${JSON.stringify(coverPath)})`);
       assert(artworkTrack.artwork.startsWith('data:image/png;base64,'));
       assert.deepEqual(nativeImage.createFromDataURL(artworkTrack.artwork).getSize(),{width:128,height:128});
@@ -240,6 +240,39 @@ app.on('browser-window-created', (_event, window) => {
       await execute(`document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
       assert.equal(await execute(`!document.querySelector('#sidebar-visualizer').hidden&&sidebarVisualizer.width>0&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
       assert.equal(await execute(`document.querySelector('#show-equalizer').getAttribute('aria-pressed')`),'true');
+      // The tunnel replaces only the middle panels and reuses the playing source.
+      await execute(`window.savedLibraryView={selected:state.selected,query:state.query};document.querySelector('#view-menu summary').click();document.querySelector('#view-visualizer').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      assert.equal(await execute(`document.querySelector('.sidebar').hidden&&document.querySelector('.main-content').hidden&&!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('#sidebar-visualizer').hidden`),true);
+      assert.equal(await execute(`document.querySelector('#view-visualizer').getAttribute('aria-pressed')==='true'&&document.querySelector('#view-library').getAttribute('aria-pressed')==='false'`),true);
+      assert.equal(await execute(`(()=>{const header=document.querySelector('.topbar').getBoundingClientRect(),footer=document.querySelector('.player').getBoundingClientRect(),panel=document.querySelector('#tunnel-visualizer').getBoundingClientRect();return header.height>0&&footer.height>0&&panel.top===header.bottom&&panel.bottom===footer.top&&panel.width===document.documentElement.clientWidth})()`),true);
+      await execute(`musicVisualizer.time=2;musicVisualizer.travel=0.43;for(let frame=0;frame<8;frame++)musicVisualizer.draw();document.querySelector('.toast')?.classList.remove('show');void 0`);
+      assert.equal(await execute(`musicVisualizer.mid>0.01&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
+      // Optional screenshot for visual inspection; normal checks keep no images.
+      if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),'nightwave-tunnel-preview.png'),(await window.webContents.capturePage()).toPNG());
+      const tunnelPixels=await execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let lit=0,maximum=0;for(let index=0;index<data.length;index+=400){const value=Math.max(data[index],data[index+1],data[index+2]);maximum=Math.max(maximum,value);if(value>80)lit++}return {lit,maximum,width:canvas.width,height:canvas.height}})()`);
+      assert(tunnelPixels.maximum>100&&tunnelPixels.lit>tunnelPixels.width*tunnelPixels.height/100*0.006,JSON.stringify(tunnelPixels));
+      assert.equal(await execute(`(()=>{const panel=document.querySelector('#tunnel-visualizer').getBoundingClientRect(),button=document.querySelector('#visualizer-next').getBoundingClientRect();return Math.abs(button.y+button.height/2-panel.y-panel.height/2)<1&&button.right<panel.right&&button.right>panel.right-100})()`),true);
+      // Clicking the same control cycles all effects without recreating audio.
+      const signatures=[];
+      const signature=()=>execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let value=0;for(let index=0;index<data.length;index+=400)value=(value*31+data[index]+data[index+1]*3+data[index+2]*7)>>>0;return value})()`);
+      signatures.push(await signature());
+      for(const preset of [{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Aurora'}]){
+        await execute(`document.querySelector('#visualizer-next').click();for(let frame=0;frame<4;frame++)musicVisualizer.draw();void 0`);
+        assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),preset.name);
+        assert.equal(await execute(`document.querySelector('#visualizer-next').getAttribute('aria-label')`),`Next visualizer: ${preset.next}`);
+        assert.equal(await execute(`localStorage.getItem('nightwave-visualizer')`),preset.id);
+        assert.equal(await execute(`!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
+        if(preset.id!=='tunnel'){
+          signatures.push(await signature());
+          if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),`nightwave-${preset.id}-preview.png`),(await window.webContents.capturePage()).toPNG());
+        }
+      }
+      assert.equal(new Set(signatures).size,3);
+      await execute(`document.querySelector('#visualizer-library').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      assert.equal(await execute(`document.querySelector('#tunnel-visualizer').hidden&&!document.querySelector('.sidebar').hidden&&!document.querySelector('.main-content').hidden&&!document.querySelector('#sidebar-visualizer').hidden&&musicVisualizer.frame===0`),true);
+      assert.equal(await execute(`state.selected===window.savedLibraryView.selected&&state.query===window.savedLibraryView.query&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource`),true);
+      await execute(`document.querySelector('#view-visualizer').click();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
+      assert.equal(await execute(`document.querySelector('#tunnel-visualizer').hidden&&localStorage.getItem('nightwave-view')==='library'`),true);
       await execute(`window.originalSpectrumSource=sidebarVisualizer.source;audio.pause();void 0`);
       assert.equal(await execute(`Math.max(...sidebarVisualizer.levels)===0&&sidebarVisualizer.frame===0`),true);
       assert.equal(await execute(`document.querySelector('#sidebar-visualizer').classList.contains('is-playing')`),false);
@@ -255,8 +288,10 @@ app.on('browser-window-created', (_event, window) => {
       // Drive the actual handler with explicit timestamps so desktop click settings cannot affect the test.
       assert.equal(await execute(`(()=>{let plays=0,edits=0;const originalPlay=playTrack,originalEdit=editMetadata;playTrack=()=>plays++;editMetadata=()=>edits++;const target=document.querySelector('.track-title');const click=timeStamp=>document.querySelector('#track-list').onclick({target,timeStamp,shiftKey:false,ctrlKey:false,metaKey:false});trackClicks.reset();click(100);click(300);click(1200);click(1800);playTrack=originalPlay;editMetadata=originalEdit;return plays===1&&edits===1})()`), true);
       // Exercise the inline editor against a real temporary MP3 and the actual tag worker.
-      await execute(`state.query='';state.tracks=[{id:'inline-test',key:${JSON.stringify(tagPath)},path:${JSON.stringify(tagPath)},title:'Song "Live"',artist:'Artist',album:'Album',duration:0}];render();editMetadata('inline-test','title')`);
+      await execute(`state.query='';state.tracks=[{id:'inline-test',key:${JSON.stringify(tagPath)},path:${JSON.stringify(tagPath)},title:'Song "Live"',artist:'Artist',album:'Album',duration:0}];render();window.normalRowHeight=document.querySelector('.track-row').getBoundingClientRect().height;editMetadata('inline-test','title')`);
       assert.equal(await execute(`document.querySelector('.metadata-input').value`), 'Song "Live"');
+      assert.equal(await execute(`document.querySelector('.track-row').getBoundingClientRect().height`),await execute(`normalRowHeight`));
+      assert.equal(await execute(`Boolean(document.querySelector('.metadata-edit-status,.metadata-save,.metadata-cancel'))`),false);
       assert.equal(await execute(`Boolean(document.querySelector('dialog[open]'))`), false);
       const inlineTitle = 'Inline "Live" <remix>';
       await execute(`(()=>{const input=document.querySelector('.metadata-input');input.value=${JSON.stringify(inlineTitle)};input.dispatchEvent(new Event('input'));input.setSelectionRange(3,7);render()})()`);
@@ -272,12 +307,18 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`state.tracks[0].artist`), 'Artist');
       assert.equal(require('node-id3').read(tagPath).artist, 'Artist');
       assert.equal(await execute(`Boolean(document.querySelector('.metadata-input'))`), false);
-      // A write error keeps the draft and displays the error in its row, without a dialog.
+      // Clicking another row saves the active field and still selects that row.
+      await execute(`(()=>{state.tracks.push({id:'other-row',title:'Other',artist:'Artist',album:'Album',duration:0});render();editMetadata('inline-test','album');const input=document.querySelector('.metadata-input');input.value='Updated album';input.dispatchEvent(new Event('input'));document.querySelector('[data-track="other-row"] .track-title').click();})()`);
+      await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(!metadataEdit){clearInterval(timer);resolve()}else if(metadataEdit.error||++attempts>100){clearInterval(timer);reject(Error(metadataEdit.error||'Click-away save timed out'))}},20)})`);
+      assert.equal(require('node-id3').read(tagPath).album,'Updated album');
+      assert.equal(await execute(`state.selectedTrackIds.has('other-row')`),true);
+      // A write error retains the draft and marks the input, without enlarging its row.
+
       await execute(`state.tracks[0].path=${JSON.stringify(path.join(temporary, 'missing.mp3'))};editMetadata('inline-test','album');const input=document.querySelector('.metadata-input');input.value='Unsaved album';input.dispatchEvent(new Event('input'));void 0`);
       await execute(`saveMetadataEdit()`);
       assert.equal(await execute(`document.querySelector('.metadata-input').value`), 'Unsaved album');
       assert.equal(await execute(`Boolean(metadataEdit.error)&&!metadataEdit.saving&&!document.querySelector('dialog[open]')`), true);
-      await execute(`document.querySelector('.metadata-cancel').click();void 0`);
+      await execute(`document.querySelector('.metadata-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0`);
       assert.equal(await execute(`(async()=>{await writeBatch(db,'playlists',[{id:'one',name:'First',order:0},{id:'two',name:'Second',order:1}]);let aborted=false;try{await transaction(db,'playlists','readwrite',store=>{store.put({id:'one',name:'Changed'});store.put({missingKey:true})})}catch{aborted=true}const values=await all('playlists');return aborted&&values.find(item=>item.id==='one').name==='First'&&values.find(item=>item.id==='two').name==='Second'})()`), true);
       // Restore the saved preference on a fresh page, and initialize the analyser
       // when it is first shown during playback that began with it hidden.
@@ -288,6 +329,16 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`!sidebarVisualizer.context&&!audio.paused`),true);
       await execute(`document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(sidebarVisualizer.analyser&&sidebarVisualizer.width>0){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Showing the equalizer did not initialize it'))}},10)})`);
       assert.equal(await execute(`!audio.paused&&sidebarVisualizer.context.state==='running'&&localStorage.getItem('nightwave-show-equalizer')==='true'`),true);
+      await execute(`document.querySelector('#view-visualizer').click();document.querySelector('#visualizer-next').click();document.querySelector('#visualizer-next').click()`);
+      await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
+      assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('.sidebar').hidden&&document.querySelector('#view-visualizer').getAttribute('aria-pressed')==='true'`),true);
+      assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),'Kaleidoscope');
+      // Start playback with the library hidden: the tunnel initializes the one
+      // shared analyser, then returning to the spectrum preserves that source.
+      await execute(`(async()=>{audio.muted=true;audio.loop=true;audio.src=await window.electronAPI.fileUrl(${JSON.stringify(tonePath)});await audio.play();await musicVisualizer.play()})()`);
+      assert.equal(await execute(`Boolean(sidebarVisualizer.source)&&!audio.paused&&sidebarVisualizer.context.state==='running'`),true);
+      await execute(`window.savedTunnelSource=sidebarVisualizer.source;document.querySelector('#visualizer-library').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      assert.equal(await execute(`sidebarVisualizer.source===window.savedTunnelSource&&!audio.paused&&!document.querySelector('#sidebar-visualizer').hidden`),true);
       assert.deepEqual(fatalErrors, []);
       finish();
     } catch (error) { finish(error); }
