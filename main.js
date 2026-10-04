@@ -7,6 +7,8 @@ const { Worker } = require('node:worker_threads');
 const { absolutePath, audioFile, createLibrary } = require('./music-library');
 const { createPhoneSync, playlistFolder } = require('./phone-sync');
 const { createArtworkSearch } = require('./artwork-search');
+const { readEmbeddedLyrics, removeLyricsTimestamps } = require('./lyrics');
+const { timedLyrics } = require('./karaoke-core');
 
 const library = createLibrary({ createThumbnail: picture => {
   if (!picture.data?.length || picture.data.length > 10 * 1024 * 1024) return null;
@@ -72,8 +74,14 @@ function registerMediaShortcuts() {
 }
 
 const normalizeLyricsValue = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const removeLyricsTimestamps = lyrics => String(lyrics || '').replace(/^\[[\d:.]+\]\s?/gm, '').trim();
-async function findLyrics({ title, artist, album, duration } = {}) {
+async function findLyrics({ title, artist, album, duration, path: filePath } = {}) {
+  if (filePath) {
+    const validatedPath = await audioFile(filePath);
+    try {
+      const lyrics = await readEmbeddedLyrics(validatedPath);
+      if (lyrics) return { status: 'found', source: 'embedded', lyrics, title, artist };
+    } catch (error) { console.warn('Embedded lyrics could not be read:', error.message); }
+  }
   const trackName = String(title || '').trim(), artistName = String(artist || '').trim();
   if (!trackName) return { status: 'not-found' };
   const cacheKey = [trackName, artistName, album, duration].join('\0');
@@ -92,7 +100,7 @@ async function findLyrics({ title, artist, album, duration } = {}) {
       (wantedArtist && normalizeLyricsValue(item.artistName) === wantedArtist ? 6 : 0) +
       (Number.isFinite(duration) && Math.abs(Number(item.duration) - duration) <= 3 ? 2 : 0);
     const match = (Array.isArray(matches) ? matches : []).filter(item => (item.plainLyrics || item.syncedLyrics) && !item.instrumental).sort((a, b) => score(b) - score(a))[0];
-    const result = match ? { status: 'found', lyrics: match.plainLyrics || removeLyricsTimestamps(match.syncedLyrics), title: match.trackName, artist: match.artistName } : { status: 'not-found' };
+    const result = match ? { status: 'found', source: 'online', lyrics: removeLyricsTimestamps(match.plainLyrics || match.syncedLyrics), title: match.trackName, artist: match.artistName } : { status: 'not-found' };
     lyricsCache.set(cacheKey, result);
     if (lyricsCache.size > 500) lyricsCache.delete(lyricsCache.keys().next().value);
     return result;
@@ -183,6 +191,11 @@ ipcMain.on('music:start-external-drag', async (event, filePaths) => {
   } catch (error) { console.warn('External drag failed:', error.message); }
 });
 handle('music:file-url', async (_event, filePath) => pathToFileURL(await audioFile(filePath)).href);
+handle('music:timed-lyrics', async (_event, filePath) => {
+  const validatedPath = await audioFile(filePath);
+  const { parseFile } = await import('music-metadata');
+  return timedLyrics(await parseFile(validatedPath, { skipCovers: true }));
+});
 handle('music:find-lyrics', (_event, track) => {
   if (!track || typeof track !== 'object' || [track.title, track.artist, track.album].some(value => value != null && (typeof value !== 'string' || value.length > 2000))) {
     throw new Error('Invalid lyrics request.');
@@ -218,7 +231,7 @@ handle('music:write-tags', async (_event, values) => {
 handle('music:search-artwork', async (_event, request) => {
   const filePath = await audioFile(request?.filePath);
   if (path.extname(filePath).toLowerCase() !== '.mp3') throw new Error('Saving album covers is currently supported for MP3 files only.');
-  return artworkSearch.search({ filePath, title: request.title, artist: request.artist, album: request.album });
+  return artworkSearch.search({ filePath, title: request.title, artist: request.artist, album: request.album, cursor: request.cursor });
 });
 handle('music:save-artwork', async (_event, request) => {
   const filePath = await audioFile(request?.filePath);

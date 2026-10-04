@@ -6,7 +6,7 @@ const trackClicks = new TrackClicks();
 let playbackRequest = 0, scanning = false;
 let metadataEdit = null, renderingTracks = false;
 const savedLibraryFolders=(()=>{try{const folders=JSON.parse(localStorage.getItem('nightwave-library-folders')||'[]');return Array.isArray(folders)?folders.filter(folder=>typeof folder==='string'&&folder):[]}catch{return []}})();
-let db, state = { tracks: [], playlists: [], selected: 'all', currentId: null, shuffle: false, repeat: false, objectUrl: null, query: '', sort: { key: 'artist', direction: 'asc' }, selectedTrackIds: new Set(), selectionAnchor: null, libraryFolders: savedLibraryFolders };
+let db, state = { tracks: [], playlists: [], selected: 'all', currentId: null, shuffle: localStorage.getItem('nightwave-shuffle')==='true', repeat: localStorage.getItem('nightwave-repeat')==='true', objectUrl: null, query: '', sort: { key: 'artist', direction: 'asc' }, selectedTrackIds: new Set(), selectionAnchor: null, libraryFolders: savedLibraryFolders };
 const metadataParser = import('./vendor/music-metadata.bundle.mjs').then(module=>module.parseBlob).catch(()=>null);
 const sidebarMin=265,sidebarMax=415,savedSidebarWidth=Number(localStorage.getItem('nightwave-sidebar-width'));if(savedSidebarWidth>=sidebarMin&&savedSidebarWidth<=sidebarMax)document.documentElement.style.setProperty('--sidebar-width',`${savedSidebarWidth}px`);
 const lyricsMin=370,lyricsMax=620,savedLyricsWidth=Number(localStorage.getItem('nightwave-lyrics-width'));if(savedLyricsWidth>=lyricsMin&&savedLyricsWidth<=lyricsMax)document.documentElement.style.setProperty('--lyrics-width',`${savedLyricsWidth}px`);
@@ -108,7 +108,7 @@ async function refreshLoadedFolders(){
 }
 function manageLibraryFolders(){if(!state.libraryFolders.length)return;const dialog=document.createElement('dialog');dialog.className='text-dialog folder-dialog';dialog.innerHTML='<form method="dialog"><p>Refresh will scan the folders listed here. Removing a folder does not remove music already loaded in Nightwave.</p><ul class="folder-list"></ul><div><button class="dialog-primary" value="done">Done</button></div></form>';const list=dialog.querySelector('.folder-list'),paint=()=>{list.innerHTML=state.libraryFolders.map((folder,index)=>`<li><code>${escapeHTML(folder)}</code><button type="button" data-remove-folder="${index}" aria-label="Remove ${escapeHTML(folder)}">Remove</button></li>`).join('')};paint();dialog.onclick=event=>{const button=event.target.closest('[data-remove-folder]');if(!button)return;state.libraryFolders.splice(Number(button.dataset.removeFolder),1);saveLibraryFolders();render();paint()};dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal()}
 async function addFiles(files){for(const file of files)await addTrack(file);render();toast(`${files.length} file${files.length===1?'':'s'} saved to your library`)}
-function releaseAudio(){audio.pause();audio.removeAttribute('src');audio.load();if(state.objectUrl)URL.revokeObjectURL(state.objectUrl);state.objectUrl=null}
+function releaseAudio(){window.NightwaveKaraoke?.clear();audio.pause();audio.removeAttribute('src');audio.load();if(state.objectUrl)URL.revokeObjectURL(state.objectUrl);state.objectUrl=null}
 // The fill ends at the thumb centre, whose travel excludes the thumb width.
 function updateSongProgress(value) {
   const progress = $('#progress');
@@ -144,6 +144,10 @@ async function removeSelectedTracks(){
   state.selectedTrackIds=new Set();state.selectionAnchor=null;trackClicks.reset();render();
   toast(playlist?`${count} tracks removed from ${playlist.name}.`:`${count} tracks unloaded. Playlist assignments were kept.`);
 }
+function scrollPlayingTrackIntoView(){
+  const content=$('.main-content');if(!content||content.hidden)return;
+  $('#track-list .track-row.playing')?.scrollIntoView({behavior:'instant',block:'center',inline:'nearest'});
+}
 async function playTrack(trackId,keepQueue=false){
   const track=state.tracks.find(t=>t.id===trackId);if(!track)return;
   if(!keepQueue)playbackQueue.start(visibleTracks().map(item=>item.id),trackId,state.shuffle);
@@ -156,8 +160,9 @@ async function playTrack(trackId,keepQueue=false){
     if(!source)throw Error('File unavailable');
     state.objectUrl=objectUrl;
     audio.src=source;state.currentId=track.id;
+    window.NightwaveKaraoke?.refresh(track);
     await audio.play();if(request!==playbackRequest)return;
-    $('#now-title').textContent=track.title;$('#now-artist').textContent=track.artist;$('#play').textContent='Ⅱ';render();
+    $('#now-title').textContent=track.title;$('#now-artist').textContent=track.artist;$('#play').textContent='Ⅱ';render();scrollPlayingTrackIntoView();
   }catch(error){
     if(request!==playbackRequest)return;
     stopPlayback();render();toast('This file could not be played. Check that it is available and supported.');
@@ -171,7 +176,7 @@ function nextTrack(back=false){
 async function newPlaylist(){ const name=await askText('Name your playlist');if(!name)return; const p={id:id(),name,trackKeys:[],order:state.playlists.length};await put('playlists',p);state.playlists.push(p);state.selected=p.id;render(); }
 async function renamePlaylist(playlistId){const playlist=state.playlists.find(p=>p.id===playlistId);if(!playlist)return;const name=await askText('Rename playlist',playlist.name);if(!name||name===playlist.name)return;await put('playlists',{...playlist,name});playlist.name=name;render();}
 async function deletePlaylist(playlistId){const playlist=state.playlists.find(p=>p.id===playlistId);if(!playlist||!await askConfirm(`Delete the playlist “${playlist.name}”? Its music files will stay in your library.`,'Delete playlist'))return;await del('playlists',playlistId);state.playlists=state.playlists.filter(p=>p.id!==playlistId);if(state.selected===playlistId)state.selected='all';render();toast('Playlist deleted.');}
-async function songMenu(trackId,anchor){const track=state.tracks.find(item=>item.id===trackId);if(!track)return;const choice=await askSongAction(anchor,track);if(choice==='playlist')return addToPlaylist(trackId);if(choice==='lyrics')return openLyrics(track);if(choice==='artwork')return updateThumbnail(track);if(choice==='reveal'){if(track.path&&window.electronAPI)await window.electronAPI.showInFolder(track.path);else toast('This file must be loaded through the Electron folder picker first.')}}
+async function songMenu(trackId,anchor,position){const track=state.tracks.find(item=>item.id===trackId);if(!track)return;const choice=await askSongAction(anchor,track,position);if(choice==='playlist')return addToPlaylist(trackId);if(choice==='lyrics')return openLyrics(track);if(choice==='artwork')return updateThumbnail(track);if(choice==='reveal'){if(track.path&&window.electronAPI)await window.electronAPI.showInFolder(track.path);else toast('This file must be loaded through the Electron folder picker first.')}}
 function captureMetadataFocus(){
   const focused=document.activeElement;
   if(!focused?.closest('.inline-metadata-editor'))return null;
@@ -240,52 +245,68 @@ function askText(label,initial=''){
   });
 }
 function askConfirm(message,action='Confirm'){return new Promise(resolve=>{const dialog=document.createElement('dialog');dialog.className='text-dialog';dialog.innerHTML=`<form method="dialog"><p>${escapeHTML(message)}</p><div><button type="button" data-cancel>Cancel</button><button class="dialog-primary" value="confirm">${escapeHTML(action)}</button></div></form>`;document.body.append(dialog);dialog.querySelector('[data-cancel]').onclick=()=>dialog.close('cancel');dialog.addEventListener('close',()=>{const accepted=dialog.returnValue==='confirm';dialog.remove();resolve(accepted)});dialog.showModal()})}
-function askSongAction(anchor,track){return new Promise(resolve=>{const menu=document.createElement('div'),rect=anchor.getBoundingClientRect();menu.className='song-popover';menu.innerHTML=`<button data-action="playlist">Add to playlist</button><button data-action="lyrics">Lyrics</button><button data-action="artwork"${window.electronAPI?.searchArtwork&&track.path&&/\.mp3$/i.test(track.path)?'':' disabled title="Available for MP3 files loaded from a folder"'}>Update thumbnail</button><button data-action="reveal">Show in file manager</button>`;document.body.append(menu);const width=menu.offsetWidth,height=menu.offsetHeight;menu.style.left=`${Math.max(10,Math.min(window.innerWidth-width-10,rect.right-width))}px`;menu.style.top=`${Math.max(10,Math.min(window.innerHeight-height-10,rect.bottom+6))}px`;const close=action=>{menu.remove();document.removeEventListener('mousedown',outside);document.removeEventListener('keydown',escape);resolve(action)};const outside=event=>{if(!menu.contains(event.target)&&event.target!==anchor)close('cancel')};const escape=event=>{if(event.key==='Escape')close('cancel')};menu.onclick=event=>{const button=event.target.closest('[data-action]');if(button&&!button.disabled)close(button.dataset.action)};setTimeout(()=>{document.addEventListener('mousedown',outside);document.addEventListener('keydown',escape)},0)})}
+function askSongAction(anchor,track,position){return new Promise(resolve=>{const menu=document.createElement('div'),rect=anchor.getBoundingClientRect();menu.className='song-popover';menu.innerHTML=`<button data-action="playlist">Add to playlist</button><button data-action="lyrics">Lyrics</button><button data-action="artwork"${window.electronAPI?.searchArtwork&&track.path&&/\.mp3$/i.test(track.path)?'':' disabled title="Available for MP3 files loaded from a folder"'}>Update thumbnail</button><button data-action="reveal">Show in file manager</button>`;document.body.append(menu);const width=menu.offsetWidth,height=menu.offsetHeight;menu.style.left=`${Math.max(10,Math.min(window.innerWidth-width-10,position?.x??rect.right-width))}px`;menu.style.top=`${Math.max(10,Math.min(window.innerHeight-height-10,position?.y??rect.bottom+6))}px`;const close=action=>{menu.remove();document.removeEventListener('mousedown',outside);document.removeEventListener('keydown',escape);resolve(action)};const outside=event=>{if(!menu.contains(event.target)&&event.target!==anchor)close('cancel')};const escape=event=>{if(event.key==='Escape')close('cancel')};menu.onclick=event=>{const button=event.target.closest('[data-action]');if(button&&!button.disabled)close(button.dataset.action)};setTimeout(()=>{document.addEventListener('mousedown',outside);document.addEventListener('keydown',escape)},0)})}
 function updateThumbnail(track){
   if(!window.electronAPI?.searchArtwork||!track.path||!/\.mp3$/i.test(track.path)){toast('Saving album covers is available for MP3 files loaded from a folder.');return}
   const dialog=document.createElement('dialog');dialog.className='text-dialog artwork-dialog';
-  dialog.innerHTML='<h2>Update thumbnail</h2><p>Choose a cover to save into this MP3. It will replace the existing embedded cover.</p><form class="artwork-search"><label>Song<input name="title" maxlength="200" required></label><label>Artist<input name="artist" maxlength="200" required></label><button class="dialog-primary" type="submit">Search</button></form><p class="artwork-status" role="status" aria-live="polite"></p><div class="artwork-results"></div><p class="artwork-source">Covers from MusicBrainz / Cover Art Archive</p><div class="artwork-dialog-actions"><button type="button" data-cancel>Cancel</button></div>';
-  const form=dialog.querySelector('form'),title=form.elements.title,artist=form.elements.artist,status=dialog.querySelector('.artwork-status'),results=dialog.querySelector('.artwork-results'),cancel=dialog.querySelector('[data-cancel]');
+  dialog.innerHTML='<h2>Update thumbnail</h2><p>Choose a cover to save into this MP3. It will replace the existing embedded cover.</p><form class="artwork-search"><label>Song<input name="title" maxlength="200" required></label><label>Artist<input name="artist" maxlength="200" required></label><label class="artwork-album">Album (optional)<input name="album" maxlength="10000" placeholder="Original album name"></label><button class="dialog-primary" type="submit">Search</button></form><p class="artwork-status" role="status" aria-live="polite"></p><div class="artwork-results"></div><div class="artwork-pagination" hidden><button type="button" data-previous>Previous 4</button><span data-page></span><button type="button" data-next>Next 4</button></div><p class="artwork-source">Covers from MusicBrainz / Cover Art Archive · Most likely matches first</p><div class="artwork-dialog-actions"><button type="button" data-cancel>Cancel</button></div>';
+  const form=dialog.querySelector('form'),title=form.elements.title,artist=form.elements.artist,album=form.elements.album,status=dialog.querySelector('.artwork-status'),results=dialog.querySelector('.artwork-results'),cancel=dialog.querySelector('[data-cancel]');
+  const pagination=dialog.querySelector('.artwork-pagination'),previous=dialog.querySelector('[data-previous]'),next=dialog.querySelector('[data-next]'),pageLabel=dialog.querySelector('[data-page]');
   title.value=track.title||'';artist.value=track.artist==='Unknown artist'?'':track.artist||'';
-  let requestId=0,saving=false;
-  const setBusy=busy=>{form.querySelectorAll('input,button').forEach(control=>control.disabled=busy);results.querySelectorAll('button').forEach(button=>button.disabled=busy)};
+  album.value=['localfiles','unknown','unknownalbum'].includes((track.album||'').toLowerCase().replace(/\s/g,''))?'':track.album||'';
+  let requestId=0,saving=false,busy=false,pages=[],pageIndex=0,cursor;
+  const setBusy=value=>{busy=value;form.querySelectorAll('input,button').forEach(control=>control.disabled=value);results.querySelectorAll('button').forEach(button=>button.disabled=value);previous.disabled=value||pageIndex===0;next.disabled=value||!(pageIndex<pages.length-1||pages[pageIndex]?.hasMore)};
   cancel.onclick=()=>dialog.close();
   dialog.addEventListener('cancel',event=>{if(saving)event.preventDefault()});
   dialog.addEventListener('close',()=>{requestId++;dialog.remove()},{once:true});
-  async function search(){
-    if(!form.reportValidity())return;
-    const request=++requestId;setBusy(true);results.replaceChildren();status.textContent='Searching for album covers…';
+  function showPage(){
+    const page=pages[pageIndex];results.replaceChildren();
+    const before=pages.slice(0,pageIndex).reduce((count,item)=>count+item.covers.length,0);
+    pageLabel.textContent=page.covers.length?`Covers ${before+1}–${before+page.covers.length}`:'No covers on this page';
+    pagination.hidden=pages.length===1&&!page.hasMore;
+    status.textContent=(page.covers.length?'Choose the correct album cover below.':page.hasMore?'No covers available in this batch. Try Next 4.':'No more matching covers found. Try adjusting the song, artist or album name.')+(page.warning?` ${page.warning}`:'');
+    for(const cover of page.covers){
+      const card=document.createElement('div');card.className='artwork-result';
+      const image=document.createElement('img');image.src=cover.preview;image.alt=`Cover for ${cover.album}`;
+      const name=document.createElement('strong');name.textContent=cover.album;
+      const detail=document.createElement('span');detail.textContent=`${cover.title} · ${cover.artist}`;
+      const match=document.createElement('span');match.textContent=[cover.reason,cover.type,cover.date?.slice(0,4)].filter(Boolean).join(' · ');
+      const save=document.createElement('button');save.type='button';save.className='dialog-primary';save.textContent='Save cover';save.setAttribute('aria-label',`Save cover for ${cover.album}`);
+      save.onclick=async()=>{
+        if(saving||busy)return;saving=true;setBusy(true);cancel.disabled=true;status.textContent='Saving cover into the song file…';
+        try{
+          const updated=await window.electronAPI.saveArtwork({filePath:track.path,token:cover.token});
+          const current=state.tracks.find(item=>item.id===track.id);
+          if(current){await put('tracks',{...current,...updated});Object.assign(current,updated)}
+          render();dialog.close();toast('Album cover saved into the song file.');
+        }catch(error){status.textContent=error.message||'Could not save this cover. Try again.'}
+        finally{saving=false;cancel.disabled=false;setBusy(false)}
+      };
+      card.append(image,name,detail);if(match.textContent)card.append(match);card.append(save);results.append(card);
+    }
+    setBusy(false);
+  }
+  async function search(more=false){
+    if(busy||!form.reportValidity())return;
+    const request=++requestId;
+    if(!more){pages=[];pageIndex=0;cursor=undefined;results.replaceChildren();pagination.hidden=true}
+    setBusy(true);status.textContent=more?'Searching for the next covers…':'Searching for album covers…';
     try{
-      const covers=await window.electronAPI.searchArtwork({filePath:track.path,title:title.value.trim(),artist:artist.value.trim(),album:track.album||''});
+      const page=await window.electronAPI.searchArtwork(more?{filePath:track.path,cursor}:{filePath:track.path,title:title.value.trim(),artist:artist.value.trim(),album:album.value.trim()});
       if(!dialog.open||request!==requestId)return;
-      status.textContent=covers.length?'Choose the correct album cover below.':'No matching covers found. Try adjusting the song or artist name.';
-      for(const cover of covers){
-        const card=document.createElement('div');card.className='artwork-result';
-        const image=document.createElement('img');image.src=cover.preview;image.alt=`Cover for ${cover.album}`;
-        const name=document.createElement('strong');name.textContent=cover.album;
-        const detail=document.createElement('span');detail.textContent=`${cover.title} · ${cover.artist}`;
-        const save=document.createElement('button');save.type='button';save.className='dialog-primary';save.textContent='Save cover';save.setAttribute('aria-label',`Save cover for ${cover.album}`);
-        save.onclick=async()=>{
-          if(saving)return;saving=true;setBusy(true);cancel.disabled=true;status.textContent='Saving cover into the song file…';
-          try{
-            const updated=await window.electronAPI.saveArtwork({filePath:track.path,token:cover.token});
-            const current=state.tracks.find(item=>item.id===track.id);
-            if(current){await put('tracks',{...current,...updated});Object.assign(current,updated)}
-            render();dialog.close();toast('Album cover saved into the song file.');
-          }catch(error){status.textContent=error.message||'Could not save this cover. Try again.'}
-          finally{saving=false;cancel.disabled=false;setBusy(false)}
-        };
-        card.append(image,name,detail,save);results.append(card);
-      }
+      cursor=page.cursor;pages.push(page);pageIndex=pages.length-1;showPage();
     }catch(error){if(dialog.open&&request===requestId)status.textContent=error.message||'Cover search failed. Check your connection and try again.'}
     finally{if(dialog.open&&request===requestId)setBusy(false)}
   }
+  previous.onclick=()=>{if(!busy&&pageIndex>0){pageIndex--;showPage()}};
+  next.onclick=()=>{if(busy)return;if(pageIndex<pages.length-1){pageIndex++;showPage()}else search(true)};
   form.onsubmit=event=>{event.preventDefault();search()};
   document.body.append(dialog);dialog.showModal();
   if(title.value&&artist.value)search();else status.textContent='Enter the song title and artist to search for a cover.';
 }
+
 let lyricsRequestId=0;
-async function openLyrics(track){const panel=$('#lyrics-panel'),requestId=++lyricsRequestId;panel.hidden=false;$('.app-shell').classList.add('lyrics-open');$('#lyrics-title').textContent=track.title;$('#lyrics-artist').textContent=track.artist||'Unknown artist';$('#lyrics-status').textContent='Searching for lyrics…';$('#lyrics-text').hidden=true;$('#lyrics-text').textContent='';$('#lyrics-credit').hidden=true;if(!window.electronAPI?.findLyrics){$('#lyrics-status').textContent='Lyrics are available in the desktop app.';return}const result=await window.electronAPI.findLyrics({title:track.title,artist:track.artist,album:track.album,duration:track.duration});if(requestId!==lyricsRequestId)return;if(result.status==='found'){if(result.title!==track.title||result.artist!==track.artist)$('#lyrics-status').textContent=`Found: ${result.title} — ${result.artist}`;else $('#lyrics-status').textContent='';$('#lyrics-text').textContent=result.lyrics;$('#lyrics-text').hidden=false;$('#lyrics-credit').hidden=false}else $('#lyrics-status').textContent=result.status==='not-found'?'No lyrics were found for this song.':'Lyrics could not be reached. Check your internet connection and try again.'}
+async function openLyrics(track){const panel=$('#lyrics-panel'),requestId=++lyricsRequestId;panel.hidden=false;$('.app-shell').classList.add('lyrics-open');$('#lyrics-title').textContent=track.title;$('#lyrics-artist').textContent=track.artist||'Unknown artist';$('#lyrics-status').textContent='Loading lyrics…';$('#lyrics-text').hidden=true;$('#lyrics-text').textContent='';$('#lyrics-credit').hidden=true;if(!window.electronAPI?.findLyrics){$('#lyrics-status').textContent='Lyrics are available in the desktop app.';return}const result=await window.electronAPI.findLyrics({path:track.path,title:track.title,artist:track.artist,album:track.album,duration:track.duration});if(requestId!==lyricsRequestId)return;if(result.status==='found'){if(result.title!==track.title||result.artist!==track.artist)$('#lyrics-status').textContent=`Found: ${result.title} — ${result.artist}`;else $('#lyrics-status').textContent='';$('#lyrics-text').textContent=result.lyrics;$('#lyrics-text').hidden=false;$('#lyrics-credit').textContent=result.source==='embedded'?'Lyrics from this file.':'Lyrics provided by LRCLIB.';$('#lyrics-credit').hidden=false}else $('#lyrics-status').textContent=result.status==='not-found'?'No lyrics were found for this song.':'Lyrics could not be reached. Check your internet connection and try again.'}
 function paintSelection(){document.querySelectorAll('#track-list [data-track]').forEach(row=>row.classList.toggle('selected-track',state.selectedTrackIds.has(row.dataset.track)))}
 function selectTracks(trackId,event){const tracks=visibleTracks(),ids=tracks.map(track=>track.id);if(event.shiftKey&&state.selectionAnchor){const start=ids.indexOf(state.selectionAnchor),end=ids.indexOf(trackId);if(start>=0&&end>=0)state.selectedTrackIds=new Set(ids.slice(Math.min(start,end),Math.max(start,end)+1));}else if(event.ctrlKey||event.metaKey){if(state.selectedTrackIds.has(trackId))state.selectedTrackIds.delete(trackId);else state.selectedTrackIds.add(trackId);state.selectedTrackIds=new Set(state.selectedTrackIds);state.selectionAnchor=trackId;}else{state.selectedTrackIds=new Set([trackId]);state.selectionAnchor=trackId;}paintSelection();}
 function showPlayingTrack(){if(!state.currentId){toast('Nothing is playing.');return}const track=state.tracks.find(item=>item.id===state.currentId),playlist=selectedPlaylist();if(!track){toast('The playing track is no longer in your library.');return}setAppView('library');if(playlist&&!playlistTrackKeys(playlist).includes(track.key))state.selected='all';state.query='';$('#search').value='';state.selectedTrackIds=new Set([state.currentId]);state.selectionAnchor=state.currentId;render();requestAnimationFrame(()=>document.querySelector(`#track-list [data-track="${state.currentId}"]`)?.scrollIntoView({behavior:'smooth',block:'center'}));}
@@ -346,6 +367,12 @@ $('#track-list').onclick=e=>{
   if(action==='play')playTrack(row.dataset.track);
   else if(action==='edit')editMetadata(row.dataset.track,field);
 };
+$('#track-list').oncontextmenu=e=>{
+  if(e.target.closest('.inline-metadata-editor'))return;
+  const row=e.target.closest('[data-track]');if(!row)return;
+  e.preventDefault();trackClicks.reset();
+  songMenu(row.dataset.track,row.querySelector('[data-menu]'),{x:e.clientX,y:e.clientY});
+};
 // Both actions are classified from click timing; native dblclick must not trigger a second action.
 $('#track-list').ondblclick=e=>{if(!e.target.closest('.inline-metadata-editor'))e.preventDefault()};
 $('#track-list').ondragstart=e=>{
@@ -397,7 +424,12 @@ document.addEventListener('keydown',e=>{const target=e.target;if(e.key!=='Delete
 async function togglePlayback(){if(!state.currentId){const track=visibleTracks()[0];if(track)await playTrack(track.id);return}if(audio.paused){try{await audio.play();$('#play').textContent='Ⅱ'}catch{toast('Playback could not be resumed.')}}else{audio.pause();$('#play').textContent='▶'}}
 function updateMediaSession(){if(!('mediaSession' in navigator))return;const track=state.tracks.find(item=>item.id===state.currentId);navigator.mediaSession.playbackState=track&&!audio.paused?'playing':track?'paused':'none';if(track&&'MediaMetadata' in window)navigator.mediaSession.metadata=new MediaMetadata({title:track.title,artist:track.artist,album:track.album});else if(!track)navigator.mediaSession.metadata=null}
 function setupMediaSession(){if(!('mediaSession' in navigator))return;const handlers={play:()=>{if(audio.paused)togglePlayback()},pause:()=>{if(!audio.paused)togglePlayback()},previoustrack:()=>nextTrack(true),nexttrack:()=>nextTrack()};for(const [action,handler] of Object.entries(handlers)){try{navigator.mediaSession.setActionHandler(action,handler)}catch{}}}
-$('#play').onclick=togglePlayback;$('#next').onclick=()=>nextTrack();$('#previous').onclick=()=>nextTrack(true);window.electronAPI?.onPlaybackCommand(command=>{if(command==='toggle')togglePlayback();else if(command==='next')nextTrack();else if(command==='previous')nextTrack(true)});setupMediaSession();$('#shuffle').onclick=e=>{state.shuffle=!state.shuffle;playbackQueue.setShuffle(state.shuffle);e.currentTarget.classList.toggle('active',state.shuffle)};$('#repeat').onclick=e=>{state.repeat=!state.repeat;e.currentTarget.classList.toggle('active',state.repeat)};
+$('#play').onclick=togglePlayback;$('#next').onclick=()=>nextTrack();$('#previous').onclick=()=>nextTrack(true);window.electronAPI?.onPlaybackCommand(command=>{if(command==='toggle')togglePlayback();else if(command==='next')nextTrack();else if(command==='previous')nextTrack(true)});setupMediaSession();
+playbackQueue.setShuffle(state.shuffle);
+for(const mode of ['shuffle','repeat']){
+  const button=$(`#${mode}`),paint=()=>{button.classList.toggle('active',state[mode]);button.setAttribute('aria-pressed',String(state[mode]))};
+  paint();button.onclick=()=>{state[mode]=!state[mode];if(mode==='shuffle')playbackQueue.setShuffle(state.shuffle);localStorage.setItem(`nightwave-${mode}`,String(state[mode]));paint()};
+}
 audio.ontimeupdate=()=>{const value=audio.duration?audio.currentTime/audio.duration*100:0;updateSongProgress(value);$('#current-time').textContent=time(audio.currentTime)};audio.onloadedmetadata=()=>{$('#duration').textContent=time(audio.duration)};audio.onplay=updateMediaSession;audio.onpause=updateMediaSession;audio.onended=()=>state.repeat?(audio.currentTime=0,audio.play()):nextTrack();$('#progress').oninput=e=>{updateSongProgress(Number(e.target.value));if(Number.isFinite(audio.duration)&&audio.duration>0){audio.currentTime=audio.duration*(e.target.value/100);$('#current-time').textContent=time(audio.currentTime)}};const savedVolumeValue=localStorage.getItem('nightwave-volume'),savedVolume=Number(savedVolumeValue),initialVolume=savedVolumeValue!==null&&Number.isFinite(savedVolume)&&savedVolume>=0&&savedVolume<=1?savedVolume:.8,volumeControl=$('#volume');audio.volume=initialVolume;volumeControl.value=initialVolume;volumeControl.style.setProperty('--value',`${initialVolume*100}%`);volumeControl.oninput=e=>{audio.volume=e.target.value;volumeControl.style.setProperty('--value',`${audio.volume*100}%`);localStorage.setItem('nightwave-volume',audio.volume)};
 const looksTemporaryTitle = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value||'').trim());
 async function refreshSavedMetadata(){

@@ -77,7 +77,9 @@
 
       <section id="tunnel-visualizer" class="tunnel-panel" aria-label="Music visualizer" hidden>
         <canvas id="tunnel-canvas" aria-hidden="true"></canvas>
-        <div class="tunnel-toolbar"><span id="visualizer-name" aria-live="polite">Space tunnel</span><button id="visualizer-library" type="button">Back to library</button></div>
+        <div class="tunnel-toolbar"><span id="visualizer-name" aria-live="polite">Space tunnel</span><div class="visualizer-actions"><button id="visualizer-library" type="button">Back to library</button><button id="karaoke-toggle" type="button" aria-pressed="false">Turn on karaoke lyrics</button></div></div>
+        <div id="karaoke-lyrics" class="karaoke-lyrics" hidden></div>
+        <p id="karaoke-status" class="karaoke-status" role="status" hidden></p>
         <button id="visualizer-next" class="visualizer-next" type="button" aria-label="Next visualizer" title="Next visualizer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></button>
         <p class="tunnel-idle" id="tunnel-idle">Play a song to bring the visuals to life</p>
       </section>
@@ -91,6 +93,8 @@
     <audio id="audio"></audio>
     <script src="renderer-core.js"></script>
     <script src="app.js"></script>
+    <script src="karaoke-core.js"></script>
+    <script src="karaoke.js"></script>
     <script src="visualizer.js"></script>
   </body>
 </html>

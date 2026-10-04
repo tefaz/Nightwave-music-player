@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPathForFile: file => webUtils.getPathForFile(file),
   fileUrl: filePath => ipcRenderer.invoke('music:file-url', filePath),
   findLyrics: track => ipcRenderer.invoke('music:find-lyrics', track),
+  readTimedLyrics: filePath => ipcRenderer.invoke('music:timed-lyrics', filePath),
   writeTags: values => ipcRenderer.invoke('music:write-tags', values),
   searchArtwork: request => ipcRenderer.invoke('music:search-artwork', request),
   saveArtwork: request => ipcRenderer.invoke('music:save-artwork', request),

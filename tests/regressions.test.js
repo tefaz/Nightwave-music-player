@@ -10,6 +10,58 @@ const { createLibrary, absolutePath, audioFile } = require('../music-library');
 const { createPhoneSync, fileIdentity, playlistFolder } = require('../phone-sync');
 const { createArtworkSearch, readLimited } = require('../artwork-search');
 
+async function audioVisualizer() {
+  const source = await fs.readFile(path.join(__dirname, '../visualizer.js'), 'utf8');
+  const Visualizer = vm.runInNewContext(`${source.slice(source.indexOf('class MusicVisualizer'), source.indexOf('const musicVisualizer'))}; MusicVisualizer`);
+  const visualizer = Object.create(Visualizer.prototype);
+  const input = new Float32Array(1024).fill(-Infinity);
+  Object.assign(visualizer, {
+    audio: { paused: false, ended: false }, motion: { matches: false },
+    analysis: { context: { sampleRate: 48000 } },
+    analyser: { fftSize: 2048, getFloatFrequencyData: output => output.set(input), getByteTimeDomainData: output => output.fill(128) },
+    spectrum: new Float32Array(1024), previousSpectrum: new Float32Array(1024), waveform: new Uint8Array(2048)
+  });
+  visualizer.resetAudio();
+  return { visualizer, input };
+}
+
+test('beat detection follows repeated drum attacks at different volumes and frame rates', async () => {
+  for (const amplitude of [0.025, 0.25]) {
+    for (const fps of [30, 60]) {
+      const { visualizer, input } = await audioVisualizer();
+      const hits = [];
+      for (let frame = 0; frame < fps * 2; frame++) {
+        const phase = frame % (fps / 2);
+        const bass = amplitude * Math.exp(-phase / fps / 0.07);
+        input.fill(-Infinity);input.fill(20 * Math.log10(bass), 1, 10);
+        visualizer.readAudio(1 / fps);
+        if (visualizer.beatAge === 0) hits.push(frame);
+        if (phase === 0) assert(visualizer.beat > 0.7, `Missed attack at ${amplitude}, ${fps} fps`);
+        if (phase === fps / 2 - 1) assert(visualizer.beat < 0.2);
+      }
+      assert.deepEqual(hits, [0, fps / 2, fps, fps * 1.5]);
+    }
+  }
+});
+
+test('held tones and silence do not generate repeated beats; pause and track changes clear the response', async () => {
+  const { visualizer, input } = await audioVisualizer();
+  for (let frame = 0; frame < 30; frame++) visualizer.readAudio();
+  assert.equal(visualizer.beat, 0);assert.equal(visualizer.bass, 0);
+  input.fill(-20, 1, 10);
+  visualizer.readAudio();assert(visualizer.beat > 0.7);assert(visualizer.bass > 0.5);
+  for (let frame = 0; frame < 60; frame++) {
+    visualizer.readAudio();assert(visualizer.beatAge > 0);
+  }
+  assert(visualizer.beat < 0.001);
+  visualizer.audio.paused = true;
+  for (let frame = 0; frame < 30; frame++) visualizer.readAudio();
+  assert(visualizer.bass < 0.01);assert(visualizer.waveform.every(value => value === 128));
+  visualizer.resetAudio();
+  assert.equal(visualizer.bass, 0);assert.equal(visualizer.beat, 0);
+  assert(visualizer.previousSpectrum.every(value => value === 0));
+});
+
 test('cover search ranks the tagged album, skips missing covers, and binds expiring selections to the file', async () => {
   const ids = [1, 2, 3].map(number => `00000000-0000-0000-0000-${String(number).padStart(12, '0')}`);
   let clock = 10000;
@@ -17,6 +69,7 @@ test('cover search ranks the tagged album, skips missing covers, and binds expir
   const service = createArtworkSearch({ interval: 0, now: () => clock, userAgent: 'Test',
     fetch: async url => {
       requests.push(url);
+      if (url.includes('/ws/2/release?')) return Response.json({ releases: [] });
       if (url.includes('musicbrainz.org')) return Response.json({ recordings: [
         { title: 'Song', score: 100, 'artist-credit': [{ artist: { name: 'Wrong artist' } }], releases: [{ id: ids[2], title: 'Wrong' }] },
         { title: 'Song', score: 100, 'artist-credit': [{ artist: { name: 'Artist' } }], releases: [{ id: ids[0], title: 'Other' }, { id: ids[1], title: 'Album' }, { id: '../unsafe', title: 'Bad' }] }
@@ -25,9 +78,9 @@ test('cover search ranks the tagged album, skips missing covers, and binds expir
     },
     prepareCover: buffer => ({ buffer, preview: 'data:image/png;base64,Y292ZXI=' })
   });
-  const results = await service.search({ filePath: '/song.mp3', title: 'Song', artist: 'Artist', album: 'Album' });
+  const { covers: results } = await service.search({ filePath: '/song.mp3', title: 'Song', artist: 'Artist', album: 'Album' });
   assert.equal(results.length, 1);assert.equal(results[0].album, 'Other');
-  assert(requests[1].includes(ids[1]));assert.equal(requests.length, 3);
+  assert(requests.filter(url => url.includes('coverartarchive.org'))[0].includes(ids[1]));assert.equal(requests.length, 4);
   assert.equal(service.selectedCover('/song.mp3', results[0].token).toString(), 'cover');
   assert.throws(() => service.selectedCover('/another.mp3', results[0].token), /expired/);
   clock += 10 * 60 * 1000 + 1;
@@ -38,10 +91,114 @@ test('cover search ranks the tagged album, skips missing covers, and binds expir
 test('cover search handles no matches, service errors, and bounded responses', async () => {
   const service = fetch => createArtworkSearch({ fetch, interval: 0, prepareCover: () => null });
   const query = { filePath: '/song.mp3', title: 'Song', artist: 'Artist' };
-  assert.deepEqual(await service(async () => Response.json({ recordings: [] })).search(query), []);
+  assert.deepEqual((await service(async () => Response.json({ recordings: [] })).search(query)).covers, []);
   await assert.rejects(service(async () => new Response('', { status: 503 })).search(query), /unavailable/);
   await assert.rejects(readLimited(new Response('Too long'), 3), /too much data/);
   await assert.rejects(readLimited(new Response('x', { headers: { 'Content-Length': '100' } }), 3), /too much data/);
+});
+
+const coverId = number => `00000000-0000-0000-0000-${String(number).padStart(12, '0')}`;
+const coverCredit = [{ artist: { name: 'Artist' } }];
+const testCover = buffer => ({ buffer, preview: `data:image/png;base64,${buffer.toString('base64')}` });
+const coverQuery = { filePath: '/song.mp3', title: 'Song', artist: 'Artist' };
+
+test('cover search prefers the tagged album, studio albums and earlier releases; groups duplicate editions', async () => {
+  const releases = [
+    { id: coverId(1), title: 'Greatest Hits', status: 'Official', date: '2020', 'release-group': { id: coverId(101), 'primary-type': 'Album', 'secondary-types': ['Compilation'] } },
+    { id: coverId(2), title: 'Later Album', status: 'Official', date: '2010', 'release-group': { id: coverId(102), 'primary-type': 'Album' } },
+    { id: coverId(3), title: 'Original Album', status: 'Official', date: '1990', 'release-group': { id: coverId(103), 'primary-type': 'Album' } },
+    { id: coverId(4), title: 'Original Album', status: 'Official', date: '1991', 'release-group': { id: coverId(103), 'primary-type': 'Album' } },
+    { id: coverId(5), title: 'Live Album', status: 'Official', date: '1989', 'release-group': { id: coverId(105), 'primary-type': 'Album', 'secondary-types': ['Live'] } }
+  ];
+  const service = createArtworkSearch({ interval: 0, prepareCover: testCover,
+    fetch: async url => url.includes('musicbrainz.org') ? Response.json({ recordings: [{ title: 'Song', score: 100, 'artist-credit': coverCredit, releases }] }) : new Response(url)
+  });
+  const first = await service.search(coverQuery);
+  assert.deepEqual(first.covers.map(cover => cover.album), ['Original Album', 'Later Album', 'Live Album', 'Greatest Hits']);
+  assert.equal(first.hasMore, false);
+  assert.equal(first.covers[0].reason, 'Studio album');
+  const tagged = await service.search({ ...coverQuery, album: 'Greatest Hits' });
+  assert.equal(tagged.covers[0].album, 'Greatest Hits');
+  assert.equal(tagged.covers[0].reason, 'Matches album name');
+});
+
+test('cover search finds a tagged album missing from song results and falls back across editions', async () => {
+  const requests = [];
+  const group = { id: coverId(100), title: 'Original Album', 'primary-type': 'Album' };
+  const service = createArtworkSearch({ interval: 0, prepareCover: testCover, fetch: async url => {
+    requests.push(url);
+    if (url.includes('/recording?')) return Response.json({ recordings: [] });
+    if (url.includes('/ws/2/release?')) return Response.json({ releases: [
+      { id: coverId(1), title: 'Original Album', date: '1990', 'artist-credit': coverCredit, 'release-group': group },
+      { id: coverId(2), title: 'Original Album (Deluxe Edition)', date: '2000', 'artist-credit': coverCredit, 'release-group': group },
+      { id: coverId(3), title: 'Original Album', 'artist-credit': [{ artist: { name: 'Wrong Artist' } }] }
+    ] });
+    return url.includes(`/release/${coverId(2)}/`) ? new Response('correct cover') : new Response('', { status: 404 });
+  } });
+  const page = await service.search({ ...coverQuery, album: 'Original Album' });
+  assert.equal(page.covers.length, 1);assert.equal(page.covers[0].album, 'Original Album');
+  assert.equal(service.selectedCover(coverQuery.filePath, page.covers[0].token).toString(), 'correct cover');
+  assert.equal(requests.filter(url => url.includes('coverartarchive.org')).length, 3);
+  assert.equal(new URL(requests[1]).searchParams.get('query'), 'release:"Original Album" AND artist:"Artist"');
+});
+
+test('cover search browses matching recordings to find studio albums outside the search release list', async () => {
+  const requests = [];
+  const service = createArtworkSearch({ interval: 0, prepareCover: testCover, fetch: async url => {
+    requests.push(url);
+    if (url.includes('/recording?')) return Response.json({ recordings: [{ id: coverId(50), title: 'Song', score: 100, 'artist-credit': coverCredit,
+      releases: [{ id: coverId(1), title: 'Top Hits', 'release-group': { 'primary-type': 'Album', 'secondary-types': ['Compilation'] } }] }] });
+    if (url.includes('/ws/2/release?')) return Response.json({ releases: [{ id: coverId(2), title: 'Original Album', 'release-group': { id: coverId(100), 'primary-type': 'Album' } }] });
+    return new Response(url);
+  } });
+  const page = await service.search({ ...coverQuery, album: 'Local files' });
+  assert.deepEqual(page.covers.map(cover => cover.album), ['Original Album', 'Top Hits']);
+  assert.equal(new URL(requests[0]).searchParams.get('limit'), '100');
+  assert.equal(new URL(requests[1]).searchParams.get('recording'), coverId(50));
+  assert.equal(new URL(requests[1]).searchParams.get('inc'), 'release-groups+artist-credits');
+});
+
+test('cover pages continue without repeating searches or albums and earlier selections remain saveable', async () => {
+  let clock = 10000, metadataRequests = 0;
+  const service = createArtworkSearch({ interval: 0, now: () => clock, prepareCover: testCover, fetch: async url => {
+    if (url.includes('musicbrainz.org')) {
+      metadataRequests++;
+      return Response.json({ recordings: [{ title: 'Song', score: 100, 'artist-credit': coverCredit,
+        releases: Array.from({ length: 25 }, (_, index) => ({ id: coverId(index + 1), title: `Album ${index + 1}` })) }] });
+    }
+    return new Response(url);
+  } });
+  const first = await service.search(coverQuery), pages = [first];
+  assert.equal(first.covers.length, 4);assert.equal(first.hasMore, true);
+  while (pages.at(-1).hasMore) pages.push(await service.search({ filePath: coverQuery.filePath, cursor: first.cursor }));
+  const covers = pages.flatMap(page => page.covers);
+  assert.equal(covers.length, 25);assert.equal(new Set(covers.map(cover => cover.album)).size, 25);
+  assert.equal(metadataRequests, 1);assert.equal(pages.at(-1).covers.length, 1);
+  assert(service.selectedCover(coverQuery.filePath, first.covers[0].token).length > 0);
+  await assert.rejects(service.search({ filePath: '/another.mp3', cursor: first.cursor }), /expired/);
+  clock += 10 * 60 * 1000 + 1;
+  await assert.rejects(service.search({ filePath: coverQuery.filePath, cursor: first.cursor }), /expired/);
+  assert.throws(() => service.selectedCover(coverQuery.filePath, first.covers[0].token), /expired/);
+});
+
+test('cover paging can continue past twelve missing albums and retry transient failures', async () => {
+  let broken = false;
+  const service = createArtworkSearch({ interval: 0, prepareCover: testCover, fetch: async url => {
+    if (url.includes('musicbrainz.org')) return Response.json({ recordings: [{ title: 'Song', score: 100, 'artist-credit': coverCredit,
+      releases: Array.from({ length: 17 }, (_, index) => ({ id: coverId(index + 1), title: `Album ${index + 1}` })) }] });
+    const id = Number(url.match(/-([0-9]{12})\//)[1]);
+    if (id <= 12) return new Response('', { status: 404 });
+    return broken ? new Response('', { status: 503 }) : new Response(url);
+  } });
+  const first = await service.search(coverQuery);
+  assert.equal(first.covers.length, 0);assert.equal(first.hasMore, true);
+  broken = true;
+  await assert.rejects(service.search({ filePath: coverQuery.filePath, cursor: first.cursor }), /could not be downloaded/);
+  broken = false;
+  const next = await service.search({ filePath: coverQuery.filePath, cursor: first.cursor });
+  assert.equal(next.covers.length, 4);assert.equal(next.hasMore, true);
+  const last = await service.search({ filePath: coverQuery.filePath, cursor: first.cursor });
+  assert.equal(last.covers.length, 1);assert.equal(last.hasMore, false);
 });
 
 test('text and attribute escaping preserves quotes without introducing attributes', () => {
@@ -297,7 +454,7 @@ test('blob playback releases URLs on replacement, failure, and unload', async ()
   const audio = { pause() {}, removeAttribute() {}, load() {}, play: async () => {} };
   const context = { state, audio, window: {}, playbackRequest: 0, playbackQueue: new PlaybackQueue(),
     visibleTracks: () => state.tracks, URL: { createObjectURL: () => { const url=`blob:${created.length}`;created.push(url);return url; }, revokeObjectURL: url => revoked.push(url) },
-    $: () => ({ style: { setProperty() {} } }), render() {}, toast() {}, updateMediaSession() {}
+    $: selector => selector==='#track-list .track-row.playing'?null:({ style: { setProperty() {} } }), render() {}, toast() {}, updateMediaSession() {}
   };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function releaseAudio('), source.indexOf('async function newPlaylist(')), context);
@@ -313,9 +470,68 @@ test('stale asynchronous playback requests cannot replace a newer song', async (
   const state = { tracks: [{ id: 'a', path: '/a.mp3' }, { id: 'b', path: '/b.mp3' }], objectUrl: null, shuffle: false };
   const audio = { pause() {}, removeAttribute() {}, load() {}, play: async () => {} };
   const context = { state, audio, window: { electronAPI: { fileUrl: file => file === '/a.mp3' ? new Promise(resolve => { resolveFirst=resolve; }) : Promise.resolve('file:///b.mp3') } }, playbackRequest: 0, playbackQueue: new PlaybackQueue(),
-    visibleTracks: () => state.tracks, URL: { revokeObjectURL() {} }, $: () => ({ style: { setProperty() {} } }), render() {}, toast() {}, updateMediaSession() {}
+    visibleTracks: () => state.tracks, URL: { revokeObjectURL() {} }, $: selector => selector==='#track-list .track-row.playing'?null:({ style: { setProperty() {} } }), render() {}, toast() {}, updateMediaSession() {}
   };
   vm.createContext(context);vm.runInContext(source.slice(source.indexOf('function releaseAudio('), source.indexOf('async function newPlaylist(')), context);
   const first=context.playTrack('a');await context.playTrack('b');resolveFirst('file:///a.mp3');await first;
   assert.equal(audio.src,'file:///b.mp3');assert.equal(state.currentId,'b');
+});
+
+test('embedded lyrics preserve verses and remove timestamps from plain and synchronized tags', () => {
+  const { embeddedLyrics } = require('../lyrics');
+  const syncText = [{ text: '\nFirst', timestamp: 1000 }, { text: ' line', timestamp: 1500 }, { text: '\nSecond line', timestamp: 2000 }];
+  assert.equal(embeddedLyrics({ common: { lyrics: [{ syncText, contentType: 1 }, { text: '[00:01.00]First line\n\n[00:02.00][00:03.00]Second line' }] } }), 'First line\n\nSecond line');
+  assert.equal(embeddedLyrics({ common: { lyrics: [{ syncText, contentType: 1 }] } }), 'First line\nSecond line');
+  assert.equal(embeddedLyrics({ common: { lyrics: [{ text: '   ' }, { syncText, contentType: 3 }] } }), '');
+  assert.equal(embeddedLyrics({ common: {} }), '');
+});
+
+test('lyrics check the file before cached online results and fall back only when embedded text is absent', async () => {
+  const source = await fs.readFile(path.join(__dirname, '../main.js'), 'utf8');
+  const { removeLyricsTimestamps } = require('../lyrics');
+  let embedded = 'Local verse', fetches = 0, reads = 0;
+  const lyricsCache = new Map([[['Song', 'Artist', 'Album', 100].join('\0'), { status: 'found', lyrics: 'Cached online verse' }]]);
+  const findLyrics = vm.runInNewContext(`${source.slice(source.indexOf('const normalizeLyricsValue'), source.indexOf('function runCommand'))}; findLyrics`, {
+    audioFile: async value => value,
+    readEmbeddedLyrics: async () => { reads++; return embedded; },
+    removeLyricsTimestamps, lyricsCache, URLSearchParams, AbortSignal, console,
+    app: { getVersion: () => 'test' },
+    net: { fetch: async () => { fetches++; return { ok: true, json: async () => [{ trackName: 'Song', artistName: 'Artist', syncedLyrics: '[00:01.00]Online verse' }] }; } }
+  });
+  const track = { path: '/music/song.mp3', title: 'Song', artist: 'Artist', album: 'Album', duration: 100 };
+  assert.equal((await findLyrics(track)).lyrics, 'Local verse');
+  assert.equal(fetches, 0);
+  embedded = '';
+  lyricsCache.clear();
+  assert.equal((await findLyrics(track)).lyrics, 'Online verse');
+  assert.equal(fetches, 1);
+  embedded = 'Newly enriched verse';
+  assert.equal((await findLyrics(track)).lyrics, 'Newly enriched verse');
+  assert.equal(reads, 3);
+  assert.equal(fetches, 1);
+});
+
+test('karaoke converts millisecond SYLT fragments into lines and follows seeks and instrumental gaps', () => {
+  const { timedLyrics, currentLine } = require('../karaoke-core');
+  const lines = timedLyrics({ common: { lyrics: [{ contentType: 1, timeStampFormat: 2, syncText: [
+    { text: '\nFirst', timestamp: 1000 }, { text: ' line', timestamp: 1500 },
+    { text: '\nSecond line', timestamp: 3000 }, { text: '\nFinal line', timestamp: 20000 }
+  ] }] } });
+  assert.deepEqual(lines, [{ time: 1, text: 'First line' }, { time: 3, text: 'Second line' }, { time: 20, text: 'Final line' }]);
+  assert.equal(currentLine(lines, 0), '');
+  assert.equal(currentLine(lines, 1), 'First line');
+  assert.equal(currentLine(lines, 3), 'Second line');
+  assert.equal(currentLine(lines, 12), '');
+  assert.equal(currentLine(lines, 20), 'Final line');
+  assert.equal(currentLine(lines, 1.2), 'First line');
+  assert.equal(currentLine(lines, 29), '');
+  assert.deepEqual(timedLyrics({ common: { lyrics: [{ contentType: 1, timeStampFormat: 1, syncText: [{ text: 'Unsupported frame timing', timestamp: 1 }] }] } }), []);
+});
+
+test('karaoke accepts embedded LRC timing but never invents timing for plain lyrics', () => {
+  const { timedLyrics } = require('../karaoke-core');
+  assert.deepEqual(timedLyrics({ common: { lyrics: [{ text: '[offset:100]\n[00:01.20][00:05.20]Repeated line\n[00:03.00]Middle' }] } }), [
+    { time: 1.3, text: 'Repeated line' }, { time: 3.1, text: 'Middle' }, { time: 5.3, text: 'Repeated line' }
+  ]);
+  assert.deepEqual(timedLyrics({ common: { lyrics: [{ text: 'Plain lyrics' }] } }), []);
 });

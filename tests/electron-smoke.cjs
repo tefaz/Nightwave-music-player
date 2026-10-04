@@ -25,12 +25,16 @@ const tagPath = path.join(temporary, 'tags.mp3');fs.writeFileSync(tagPath, Buffe
 const coverPath=path.join(temporary,'cover.mp3');fs.writeFileSync(coverPath,Buffer.alloc(100));
 const coverPng=nativeImage.createFromBitmap(Buffer.alloc(256*256*4,255),{width:256,height:256}).toPNG();
 assert.equal(require('node-id3').update({title:'Covered song',artist:'Cover artist',image:{mime:'image/png',type:{id:3,name:'front cover'},description:'Front',imageBuffer:coverPng}},coverPath),true);
+const karaokePath=path.join(temporary,'karaoke.mp3');fs.writeFileSync(karaokePath,Buffer.alloc(100));
+assert.equal(require('node-id3').update({synchronisedLyrics:{language:'eng',timeStampFormat:2,contentType:1,shortText:'Test',synchronisedText:[{text:'\nFirst karaoke line',timeStamp:0},{text:'\nSecond karaoke line',timeStamp:500}]}},karaokePath),true);
 // Exercise the complete online-cover flow without depending on external services.
 const replacementPng=nativeImage.createFromBitmap(Buffer.alloc(256*256*4,Buffer.from([0,0,255,255])),{width:256,height:256}).toPNG();
 const originalFetch=net.fetch.bind(net);
+let coverMetadataRequests=0,coverDownloadRequests=0;
 net.fetch=(url,options)=>{
-  if(url.startsWith('https://musicbrainz.org/ws/2/recording?'))return Promise.resolve(Response.json({recordings:[{title:'Covered song',score:100,'artist-credit':[{artist:{name:'Cover artist'}}],releases:[{id:'00000000-0000-0000-0000-000000000001',title:'Cover album',status:'Official'}]}]}));
-  if(url.startsWith('https://coverartarchive.org/release/'))return Promise.resolve(new Response(replacementPng,{headers:{'Content-Type':'image/png'}}));
+  if(url.startsWith('https://musicbrainz.org/ws/2/recording?')){coverMetadataRequests++;return Promise.resolve(Response.json({recordings:[{title:'Covered song',score:100,'artist-credit':[{artist:{name:'Cover artist'}}],releases:Array.from({length:9},(_,index)=>({id:`00000000-0000-0000-0000-${String(index+1).padStart(12,'0')}`,title:index?`Alternative album ${index}`:'Cover album',status:'Official'}))}]}))}
+  if(url.startsWith('https://musicbrainz.org/ws/2/release?'))return Promise.resolve(Response.json({releases:[]}));
+  if(url.startsWith('https://coverartarchive.org/release/')){coverDownloadRequests++;return Promise.resolve(new Response(replacementPng,{headers:{'Content-Type':'image/png'}}))}
   return originalFetch(url,options);
 };
 const fatalErrors = [];
@@ -42,7 +46,7 @@ function finish(error) {
   if (finished) return;finished = true;clearTimeout(timeout);
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
   if (error) { console.error(error); if(fatalErrors.length)console.error('Renderer errors:',fatalErrors); }
-  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, three main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, progress alignment, click timing, IndexedDB rollback).');
+  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, four main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, karaoke timing and controls, progress alignment, click timing, IndexedDB rollback).');
   // Only remove this runner's validated mkdtemp directory.
   fs.rmSync(temporary, { recursive: true, force: true });
   app.exit(error ? 1 : 0);
@@ -170,6 +174,25 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`document.querySelector('[data-action="artwork"]').textContent`),'Update thumbnail');
       await execute(`document.querySelector('[data-action="artwork"]').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(document.querySelector('.artwork-result button')){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Cover search did not finish'))}},20)})`);
       assert.equal(await execute(`document.querySelector('.artwork-result strong').textContent`),'Cover album');
+      assert.equal(await execute(`document.querySelectorAll('.artwork-result').length`),4);
+      assert.equal(await execute(`document.querySelector('.artwork-search input[name="album"]').value`),'');
+      assert.equal(await execute(`document.querySelector('[data-previous]').disabled&&!document.querySelector('[data-next]').disabled`),true);
+      const coverPageNames=await execute(`Array.from(document.querySelectorAll('.artwork-result strong'),name=>name.textContent)`);
+      const waitForCoverPage = label => execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(document.querySelector('[data-page]').textContent===${JSON.stringify(label)}&&!document.querySelector('.artwork-search button').disabled){clearInterval(timer);resolve()}else if(++attempts>250){clearInterval(timer);reject(Error('Cover page did not finish: '+document.querySelector('.artwork-status').textContent))}},20)})`);
+      await execute(`document.querySelector('[data-next]').click()`);await waitForCoverPage('Covers 5–8');
+      assert.equal(await execute(`document.querySelectorAll('.artwork-result').length`),4);
+      assert.equal(await execute(`Array.from(document.querySelectorAll('.artwork-result strong'),name=>name.textContent).some(name=>${JSON.stringify(coverPageNames)}.includes(name))`),false);
+      await execute(`document.querySelector('[data-next]').click()`);await waitForCoverPage('Covers 9–9');
+      assert.equal(await execute(`document.querySelectorAll('.artwork-result').length===1&&document.querySelector('[data-next]').disabled`),true);
+      const downloadsAfterPaging=coverDownloadRequests;
+      await execute(`document.querySelector('[data-previous]').click();document.querySelector('[data-previous]').click()`);
+      assert.deepEqual(await execute(`Array.from(document.querySelectorAll('.artwork-result strong'),name=>name.textContent)`),coverPageNames);
+      assert.equal(coverMetadataRequests,1);assert.equal(coverDownloadRequests,downloadsAfterPaging);
+      // Correcting the album search starts a fresh search and leaves the MP3 tags alone.
+      await execute(`document.querySelector('.artwork-search input[name="album"]').value='Cover album';document.querySelector('.artwork-search').requestSubmit()`);
+      await waitForCoverPage('Covers 1–4');
+      assert.equal(coverMetadataRequests,2);
+      assert.equal(await execute(`document.querySelector('[data-previous]').disabled`),true);
       // Search alone must leave the file unchanged.
       assert.deepEqual(require('node-id3').read(coverPath).image.imageBuffer,coverPng);
       await execute(`document.querySelector('.artwork-result button').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(!document.querySelector('.artwork-dialog')){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Cover save did not finish'))}},20)})`);
@@ -245,8 +268,37 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`document.querySelector('.sidebar').hidden&&document.querySelector('.main-content').hidden&&!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('#sidebar-visualizer').hidden`),true);
       assert.equal(await execute(`document.querySelector('#view-visualizer').getAttribute('aria-pressed')==='true'&&document.querySelector('#view-library').getAttribute('aria-pressed')==='false'`),true);
       assert.equal(await execute(`(()=>{const header=document.querySelector('.topbar').getBoundingClientRect(),footer=document.querySelector('.player').getBoundingClientRect(),panel=document.querySelector('#tunnel-visualizer').getBoundingClientRect();return header.height>0&&footer.height>0&&panel.top===header.bottom&&panel.bottom===footer.top&&panel.width===document.documentElement.clientWidth})()`),true);
+      assert.deepEqual(await execute(`window.electronAPI.readTimedLyrics(${JSON.stringify(karaokePath)})`),[{time:0,text:'First karaoke line'},{time:.5,text:'Second karaoke line'}]);
+      assert.equal(await execute(`(()=>{const back=document.querySelector('#visualizer-library').getBoundingClientRect(),toggle=document.querySelector('#karaoke-toggle').getBoundingClientRect();return toggle.top>back.bottom&&Math.abs(toggle.right-back.right)<1})()`),true);
+      await execute(`audio.pause();document.querySelector('#karaoke-toggle').click();NightwaveKaraoke.refresh({path:${JSON.stringify(karaokePath)}})`);
+      await execute(`audio.currentTime=.1;audio.dispatchEvent(new Event('seeked'));void 0`);
+      assert.equal(await execute(`document.querySelector('#karaoke-lyrics').textContent`),'First karaoke line');
+      await execute(`audio.currentTime=.7;audio.dispatchEvent(new Event('seeked'));void 0`);
+      assert.equal(await execute(`document.querySelector('#karaoke-lyrics').textContent`),'Second karaoke line');
+      await execute(`NightwaveKaraoke.refresh({path:${JSON.stringify(audioPath)}})`);
+      assert.equal(await execute(`document.querySelector('#karaoke-lyrics').hidden&&!document.querySelector('#karaoke-status').hidden`),true);
+      await execute(`document.querySelector('#karaoke-toggle').click();audio.currentTime=0;audio.play()`);
+      assert.equal(await execute(`document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='false'&&document.querySelector('#karaoke-lyrics').hidden&&document.querySelector('#karaoke-status').hidden`),true);
       await execute(`musicVisualizer.time=2;musicVisualizer.travel=0.43;for(let frame=0;frame<8;frame++)musicVisualizer.draw();document.querySelector('.toast')?.classList.remove('show');void 0`);
       assert.equal(await execute(`musicVisualizer.mid>0.01&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
+      assert.equal(await execute(`musicVisualizer.analyser!==sidebarVisualizer.analyser&&musicVisualizer.analyser.smoothingTimeConstant<sidebarVisualizer.analyser.smoothingTimeConstant`),true);
+      // Freeze the scene and compare an attack with its resting frame. Each
+      // preset must visibly respond, and reduced motion suppresses the pulse.
+      const beatResponses=await execute(`(()=>{
+        const visualizer=musicVisualizer,ctx=visualizer.paint,canvas=visualizer.canvas;
+        const savedBeat=visualizer.beat,savedMotion=visualizer.motion;
+        const sample=()=>ctx.getImageData(0,0,canvas.width,canvas.height).data;
+        const render=preset=>{ctx.save();try{visualizer[preset.render](true)}finally{ctx.restore()}return sample()};
+        try{return visualizer.presets.map(preset=>{
+          visualizer.motion={matches:false};visualizer.beat=0;const rest=render(preset);
+          visualizer.beat=1;const attack=render(preset);
+          let difference=0;for(let index=0;index<rest.length;index+=400)difference+=Math.abs(rest[index]-attack[index])+Math.abs(rest[index+1]-attack[index+1])+Math.abs(rest[index+2]-attack[index+2]);
+          visualizer.motion={matches:true};const reduced=render(preset);
+          let reducedDifference=0;for(let index=0;index<rest.length;index+=400)reducedDifference+=Math.abs(rest[index]-reduced[index])+Math.abs(rest[index+1]-reduced[index+1])+Math.abs(rest[index+2]-reduced[index+2]);
+          return {id:preset.id,difference,reducedDifference};
+        })}finally{visualizer.beat=savedBeat;visualizer.motion=savedMotion;visualizer.draw()}
+      })()`);
+      for(const response of beatResponses){if(response.id==='midnight')assert.equal(response.difference,0,JSON.stringify(response));else assert(response.difference>1000,JSON.stringify(response));assert.equal(response.reducedDifference,0,JSON.stringify(response))}
       // Optional screenshot for visual inspection; normal checks keep no images.
       if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),'nightwave-tunnel-preview.png'),(await window.webContents.capturePage()).toPNG());
       const tunnelPixels=await execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let lit=0,maximum=0;for(let index=0;index<data.length;index+=400){const value=Math.max(data[index],data[index+1],data[index+2]);maximum=Math.max(maximum,value);if(value>80)lit++}return {lit,maximum,width:canvas.width,height:canvas.height}})()`);
@@ -256,18 +308,19 @@ app.on('browser-window-created', (_event, window) => {
       const signatures=[];
       const signature=()=>execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let value=0;for(let index=0;index<data.length;index+=400)value=(value*31+data[index]+data[index+1]*3+data[index+2]*7)>>>0;return value})()`);
       signatures.push(await signature());
-      for(const preset of [{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Aurora'}]){
+      for(const preset of [{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Midnight'},{id:'midnight',name:'Midnight',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Aurora'}]){
         await execute(`document.querySelector('#visualizer-next').click();for(let frame=0;frame<4;frame++)musicVisualizer.draw();void 0`);
         assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),preset.name);
         assert.equal(await execute(`document.querySelector('#visualizer-next').getAttribute('aria-label')`),`Next visualizer: ${preset.next}`);
         assert.equal(await execute(`localStorage.getItem('nightwave-visualizer')`),preset.id);
         assert.equal(await execute(`!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
+        if(preset.id==='midnight')assert.equal(await execute(`musicVisualizer.frame`),0);
         if(preset.id!=='tunnel'){
           signatures.push(await signature());
           if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),`nightwave-${preset.id}-preview.png`),(await window.webContents.capturePage()).toPNG());
         }
       }
-      assert.equal(new Set(signatures).size,3);
+      assert.equal(new Set(signatures).size,4);
       await execute(`document.querySelector('#visualizer-library').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
       assert.equal(await execute(`document.querySelector('#tunnel-visualizer').hidden&&!document.querySelector('.sidebar').hidden&&!document.querySelector('.main-content').hidden&&!document.querySelector('#sidebar-visualizer').hidden&&musicVisualizer.frame===0`),true);
       assert.equal(await execute(`state.selected===window.savedLibraryView.selected&&state.query===window.savedLibraryView.query&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource`),true);
@@ -283,16 +336,83 @@ app.on('browser-window-created', (_event, window) => {
       await execute(`document.documentElement.style.setProperty('--sidebar-width','415px');new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
       assert.equal(await execute(`sidebarVisualizer.width>350&&sidebarVisualizer.width<415`),true);
       await execute(`audio.pause();audio.muted=true;URL.revokeObjectURL(spectrumBlobUrl);document.documentElement.style.removeProperty('--sidebar-width');void 0`);
+      // Follow shuffled playback in long lists immediately, including when CSS
+      // requests smooth scrolling. Inspect the geometry in the playback turn.
+      const playbackScrollChecks=await execute(`(async()=>{
+        const saved={tracks:state.tracks,playlists:state.playlists,selected:state.selected,query:state.query,sort:state.sort,shuffle:state.shuffle,random:playbackQueue.random};
+        const content=document.querySelector('.main-content'),savedBehavior=content.style.scrollBehavior;
+        const tracks=Array.from({length:80},(_,index)=>({id:'scroll-'+index,key:'scroll-key-'+index,path:${JSON.stringify(audioPath)},title:'Song '+String(index).padStart(3,'0'),artist:'Artist',album:'Album',duration:1}));
+        const checks=[];
+        const visible=()=>{const row=document.querySelector('.track-row.playing')?.getBoundingClientRect(),viewport=content.getBoundingClientRect();return Boolean(row&&row.top>=viewport.top&&row.bottom<=viewport.bottom)};
+        const change=action=>new Promise(resolve=>{const originalRender=render;render=()=>{originalRender();render=originalRender;queueMicrotask(resolve)};action()});
+        try{
+          state.tracks=tracks;state.playlists=[{id:'scroll-playlist',name:'Long playlist',trackKeys:tracks.map(track=>track.key)},{id:'other-playlist',name:'Other playlist',trackKeys:tracks.slice(0,40).map(track=>track.key)}];
+          state.query='';state.sort={key:'title',direction:'asc'};state.shuffle=true;playbackQueue.random=()=>0.25;audio.loop=true;content.style.scrollBehavior='smooth';
+          for(const view of ['all','scroll-playlist']){
+            state.selected=view;render();content.scrollTo({top:0,behavior:'instant'});
+            await playTrack('scroll-0');content.scrollTo({top:0,behavior:'instant'});
+            const nextId=playbackQueue.order[1];
+            await change(()=>audio.onended());
+            checks.push({view,phase:'shuffle ended',current:state.currentId,expected:nextId,visible:visible(),scroll:content.scrollTop});
+            const rowBounds=document.querySelector('.track-row.playing').getBoundingClientRect(),viewBounds=content.getBoundingClientRect();
+            checks.push({view,phase:'centered',offset:Math.abs((rowBounds.top+rowBounds.bottom)/2-(viewBounds.top+content.clientTop+content.clientHeight/2))});
+            const atBottom=content.scrollTop;
+            render();checks.push({view,phase:'rerender',samePosition:content.scrollTop===atBottom});
+            await change(()=>nextTrack(true));
+            checks.push({view,phase:'previous',current:state.currentId,expected:'scroll-0',visible:visible(),movedUp:content.scrollTop<atBottom});
+          }
+          // A queue can continue while browsing a playlist or filter without its song.
+          state.selected='other-playlist';render();content.scrollTo({top:400,behavior:'instant'});const before=content.scrollTop;
+          await playTrack('scroll-79',true);
+          checks.push({phase:'other playlist',selected:state.selected,unchanged:content.scrollTop===before});
+          state.selected='all';state.query='Song 000';render();await playTrack('scroll-79',true);
+          checks.push({phase:'filtered',query:state.query,noRow:!document.querySelector('.track-row.playing')});
+          setAppView('visualizer');await playTrack('scroll-0',true);
+          checks.push({phase:'visualizer',hidden:content.hidden});setAppView('library');
+          return checks;
+        }finally{stopPlayback();audio.loop=false;Object.assign(state,{tracks:saved.tracks,playlists:saved.playlists,selected:saved.selected,query:saved.query,sort:saved.sort,shuffle:saved.shuffle});playbackQueue.random=saved.random;content.style.scrollBehavior=savedBehavior;render();content.scrollTo({top:0,behavior:'instant'})}
+      })()`);
+      for(const check of playbackScrollChecks){
+        if(check.phase==='shuffle ended'){assert.equal(check.current,check.expected);assert(check.visible&&check.scroll>0,JSON.stringify(check))}
+        else if(check.phase==='previous'){assert.equal(check.current,check.expected);assert(check.visible&&check.movedUp,JSON.stringify(check))}
+        else if(check.phase==='centered')assert(check.offset<1,JSON.stringify(check));
+        else if(check.phase==='rerender')assert(check.samePosition,JSON.stringify(check));
+        else if(check.phase==='other playlist'){assert.equal(check.selected,'other-playlist');assert(check.unchanged)}
+        else if(check.phase==='filtered'){assert.equal(check.query,'Song 000');assert(check.noRow)}
+        else if(check.phase==='visualizer')assert(check.hidden);
+      }
       await execute(`playTrack('test-track').then(()=>audio.pause())`);
       assert.equal(await execute(`state.currentId`), 'test-track');
       // Drive the actual handler with explicit timestamps so desktop click settings cannot affect the test.
       assert.equal(await execute(`(()=>{let plays=0,edits=0;const originalPlay=playTrack,originalEdit=editMetadata;playTrack=()=>plays++;editMetadata=()=>edits++;const target=document.querySelector('.track-title');const click=timeStamp=>document.querySelector('#track-list').onclick({target,timeStamp,shiftKey:false,ctrlKey:false,metaKey:false});trackClicks.reset();click(100);click(300);click(1200);click(1800);playTrack=originalPlay;editMetadata=originalEdit;return plays===1&&edits===1})()`), true);
+      // Right-click anywhere on a song row reuses the three-dot menu.
+      const rowMenus=await execute(`(async()=>{
+        const row=document.querySelector('.track-row'),snapshot=()=>Array.from(document.querySelectorAll('.song-popover button'),button=>({action:button.dataset.action,text:button.textContent,disabled:button.disabled}));
+        row.querySelector('.row-menu').click();const expected=snapshot();await new Promise(resolve=>setTimeout(resolve,0));
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        const results=[];
+        for(const selector of ['.track-title','.artist-cell','.album-cell','.mini-art','.row-menu',null]){
+          trackClicks.click(row.dataset.track,'title',100);
+          const event=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:400,clientY:220});
+          (selector?row.querySelector(selector):row).dispatchEvent(event);
+          const bounds=document.querySelector('.song-popover').getBoundingClientRect();
+          results.push({prevented:event.defaultPrevented,menu:snapshot(),reset:trackClicks.previous===null,current:state.currentId,left:bounds.left,top:bounds.top});
+          await new Promise(resolve=>setTimeout(resolve,0));document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        }
+        const edgeEvent=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:innerWidth-1,clientY:innerHeight-1});row.dispatchEvent(edgeEvent);
+        const edge=document.querySelector('.song-popover').getBoundingClientRect(),fits= edge.left>=0&&edge.top>=0&&edge.right<=innerWidth&&edge.bottom<=innerHeight;
+        await new Promise(resolve=>setTimeout(resolve,0));document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        return {expected,results,fits};
+      })()`);
+      for(const result of rowMenus.results){assert(result.prevented&&result.reset);assert.deepEqual(result.menu,rowMenus.expected);assert.equal(result.current,'test-track');assert.equal(result.left,400);assert.equal(result.top,220)}
+      assert(rowMenus.fits);
       // Exercise the inline editor against a real temporary MP3 and the actual tag worker.
       await execute(`state.query='';state.tracks=[{id:'inline-test',key:${JSON.stringify(tagPath)},path:${JSON.stringify(tagPath)},title:'Song "Live"',artist:'Artist',album:'Album',duration:0}];render();window.normalRowHeight=document.querySelector('.track-row').getBoundingClientRect().height;editMetadata('inline-test','title')`);
       assert.equal(await execute(`document.querySelector('.metadata-input').value`), 'Song "Live"');
       assert.equal(await execute(`document.querySelector('.track-row').getBoundingClientRect().height`),await execute(`normalRowHeight`));
       assert.equal(await execute(`Boolean(document.querySelector('.metadata-edit-status,.metadata-save,.metadata-cancel'))`),false);
       assert.equal(await execute(`Boolean(document.querySelector('dialog[open]'))`), false);
+      assert.equal(await execute(`(()=>{const event=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2});document.querySelector('.metadata-input').dispatchEvent(event);return !event.defaultPrevented&&!document.querySelector('.song-popover')})()`),true);
       const inlineTitle = 'Inline "Live" <remix>';
       await execute(`(()=>{const input=document.querySelector('.metadata-input');input.value=${JSON.stringify(inlineTitle)};input.dispatchEvent(new Event('input'));input.setSelectionRange(3,7);render()})()`);
       assert.equal(await execute(`document.querySelector('.metadata-input').value`), inlineTitle);
@@ -322,8 +442,12 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`(async()=>{await writeBatch(db,'playlists',[{id:'one',name:'First',order:0},{id:'two',name:'Second',order:1}]);let aborted=false;try{await transaction(db,'playlists','readwrite',store=>{store.put({id:'one',name:'Changed'});store.put({missingKey:true})})}catch{aborted=true}const values=await all('playlists');return aborted&&values.find(item=>item.id==='one').name==='First'&&values.find(item=>item.id==='two').name==='Second'})()`), true);
       // Restore the saved preference on a fresh page, and initialize the analyser
       // when it is first shown during playback that began with it hidden.
-      await execute(`document.querySelector('#show-equalizer').click()`);
+      await execute(`document.querySelector('#show-equalizer').click();document.querySelector('#shuffle').click();document.querySelector('#repeat').click()`);
+      assert.equal(await execute(`state.shuffle&&state.repeat&&localStorage.getItem('nightwave-shuffle')==='true'&&localStorage.getItem('nightwave-repeat')==='true'`),true);
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
+      assert.equal(await execute(`state.shuffle&&state.repeat&&playbackQueue.shuffle&&['shuffle','repeat'].every(mode=>{const button=document.getElementById(mode);return button.classList.contains('active')&&button.getAttribute('aria-pressed')==='true'})`),true);
+      await execute(`document.querySelector('#shuffle').click()`);
+      assert.equal(await execute(`!state.shuffle&&state.repeat&&!playbackQueue.shuffle&&localStorage.getItem('nightwave-shuffle')==='false'`),true);
       assert.equal(await execute(`document.querySelector('#sidebar-visualizer').hidden&&document.querySelector('#show-equalizer').getAttribute('aria-pressed')==='false'`),true);
       await execute(`(async()=>{audio.muted=true;audio.loop=true;audio.src=await window.electronAPI.fileUrl(${JSON.stringify(tonePath)});await audio.play()})()`);
       assert.equal(await execute(`!sidebarVisualizer.context&&!audio.paused`),true);
@@ -333,12 +457,17 @@ app.on('browser-window-created', (_event, window) => {
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
       assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('.sidebar').hidden&&document.querySelector('#view-visualizer').getAttribute('aria-pressed')==='true'`),true);
       assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),'Kaleidoscope');
+      assert.equal(await execute(`!state.shuffle&&state.repeat&&!document.querySelector('#shuffle').classList.contains('active')&&document.querySelector('#shuffle').getAttribute('aria-pressed')==='false'&&document.querySelector('#repeat').getAttribute('aria-pressed')==='true'`),true);
       // Start playback with the library hidden: the tunnel initializes the one
       // shared analyser, then returning to the spectrum preserves that source.
       await execute(`(async()=>{audio.muted=true;audio.loop=true;audio.src=await window.electronAPI.fileUrl(${JSON.stringify(tonePath)});await audio.play();await musicVisualizer.play()})()`);
       assert.equal(await execute(`Boolean(sidebarVisualizer.source)&&!audio.paused&&sidebarVisualizer.context.state==='running'`),true);
       await execute(`window.savedTunnelSource=sidebarVisualizer.source;document.querySelector('#visualizer-library').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
       assert.equal(await execute(`sidebarVisualizer.source===window.savedTunnelSource&&!audio.paused&&!document.querySelector('#sidebar-visualizer').hidden`),true);
+      await execute(`document.querySelector('#repeat').click()`);
+      assert.equal(await execute(`!state.repeat&&localStorage.getItem('nightwave-repeat')==='false'`),true);
+      await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
+      assert.equal(await execute(`!state.shuffle&&!state.repeat&&['shuffle','repeat'].every(mode=>{const button=document.getElementById(mode);return !button.classList.contains('active')&&button.getAttribute('aria-pressed')==='false'})`),true);
       assert.deepEqual(fatalErrors, []);
       finish();
     } catch (error) { finish(error); }
