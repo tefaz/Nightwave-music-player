@@ -517,7 +517,7 @@ test('karaoke converts millisecond SYLT fragments into lines and follows seeks a
     { text: '\nFirst', timestamp: 1000 }, { text: ' line', timestamp: 1500 },
     { text: '\nSecond line', timestamp: 3000 }, { text: '\nFinal line', timestamp: 20000 }
   ] }] } });
-  assert.deepEqual(lines, [{ time: 1, text: 'First line' }, { time: 3, text: 'Second line' }, { time: 20, text: 'Final line' }]);
+  assert.deepEqual(lines, [{ time: 1, text: 'First line', words: [{ start: 0, time: 1 }, { start: 6, time: 1.5 }] }, { time: 3, text: 'Second line' }, { time: 20, text: 'Final line' }]);
   assert.equal(currentLine(lines, 0), '');
   assert.equal(currentLine(lines, 1), 'First line');
   assert.equal(currentLine(lines, 3), 'Second line');
@@ -534,4 +534,28 @@ test('karaoke accepts embedded LRC timing but never invents timing for plain lyr
     { time: 1.3, text: 'Repeated line' }, { time: 3.1, text: 'Middle' }, { time: 5.3, text: 'Repeated line' }
   ]);
   assert.deepEqual(timedLyrics({ common: { lyrics: [{ text: 'Plain lyrics' }] } }), []);
+});
+
+test('karaoke word cues use embedded timing and estimate line-only timing without changing text', () => {
+  const { wordSegments } = require('../karaoke-core');
+  const lines = [{ time: 1, text: 'One two three', words: [{ start: 0, time: 1 }, { start: 4, time: 1.7 }, { start: 8, time: 2.1 }] }, { time: 4, text: 'Four five six' }, { time: 10, text: 'End' }];
+  assert.deepEqual(wordSegments(lines, 0), [{ text: 'One ', time: 1 }, { text: 'two ', time: 1.7 }, { text: 'three', time: 2.1 }]);
+  assert.deepEqual(wordSegments(lines, 1).map(word => word.time), [4, 6, 8]);
+  assert.equal(wordSegments(lines, 0).map(word => word.text).join(''), lines[0].text);
+  assert.deepEqual(wordSegments(lines, -1), []);
+});
+
+test('scrolling karaoke progresses with playback, fades near the next cue and resets after backward seeking', () => {
+  const { scrollingFrame } = require('../karaoke-core');
+  const lines = [{ time: 2, text: 'First' }, { time: 6, text: 'Second' }, { time: 20, text: 'Final' }];
+  const first = scrollingFrame(lines, 2);
+  const middle = scrollingFrame(lines, 4);
+  const outgoing = scrollingFrame(lines, 5.9);
+  assert.equal(first.current, 0);assert.equal(first.next, 1);assert.equal(first.progress, 0);
+  assert.equal(middle.progress, .5);assert.equal(middle.fade, 0);
+  assert(outgoing.fade > .8);assert(outgoing.progress > .9);
+  assert.equal(scrollingFrame(lines, 6).current, 1);
+  assert.deepEqual(scrollingFrame(lines, 2), first);
+  assert.equal(scrollingFrame(lines, 15).current, -1);
+  assert.equal(scrollingFrame(lines, 30).next, -1);
 });

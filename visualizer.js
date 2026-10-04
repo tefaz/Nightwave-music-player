@@ -170,9 +170,9 @@ class MusicVisualizer {
     this.lastDraw = 0;
     this.presets = [
       { id: 'tunnel', name: 'Space tunnel', render: 'drawTunnel' },
+      { id: 'midnight', name: 'Midnight', render: 'drawMidnight', static: true },
       { id: 'aurora', name: 'Aurora', render: 'drawAurora' },
-      { id: 'kaleidoscope', name: 'Kaleidoscope', render: 'drawKaleidoscope' },
-      { id: 'midnight', name: 'Midnight', render: 'drawMidnight', static: true }
+      { id: 'kaleidoscope', name: 'Kaleidoscope', render: 'drawKaleidoscope' }
     ];
     const savedPreset = localStorage.getItem('nightwave-visualizer');
     this.presetIndex = Math.max(0, this.presets.findIndex(preset => preset.id === savedPreset));

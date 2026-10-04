@@ -272,13 +272,36 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`(()=>{const back=document.querySelector('#visualizer-library').getBoundingClientRect(),toggle=document.querySelector('#karaoke-toggle').getBoundingClientRect();return toggle.top>back.bottom&&Math.abs(toggle.right-back.right)<1})()`),true);
       await execute(`audio.pause();document.querySelector('#karaoke-toggle').click();NightwaveKaraoke.refresh({path:${JSON.stringify(karaokePath)}})`);
       await execute(`audio.currentTime=.1;audio.dispatchEvent(new Event('seeked'));void 0`);
-      assert.equal(await execute(`document.querySelector('#karaoke-lyrics').textContent`),'First karaoke line');
+      assert.equal(await execute(`document.querySelector('#karaoke-lyrics .karaoke-line').textContent`),'First karaoke line');
+      assert.equal(await execute(`document.querySelector('#karaoke-mode').textContent`),'Karaoke Mode: Scrolling lines');
+      assert.equal(await execute(`document.querySelector('#karaoke-toggle').textContent`),'Karaoke: On');
+      await execute(`document.querySelector('#karaoke-mode').click();void 0`);
+      assert.equal(await execute(`!document.querySelector('#karaoke-mode').hidden&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Current line'`),true);
+      assert.equal(await execute(`document.querySelectorAll('#karaoke-lyrics .karaoke-sung').length`),1);
+      assert.equal(await execute(`(()=>{const toggle=document.querySelector('#karaoke-toggle').getBoundingClientRect(),highlight=document.querySelector('#karaoke-highlight').getBoundingClientRect(),mode=document.querySelector('#karaoke-mode').getBoundingClientRect();return !document.querySelector('#karaoke-highlight').hidden&&highlight.top>toggle.bottom&&mode.top>highlight.bottom})()`),true);
+      await execute(`document.querySelector('#karaoke-highlight').click();void 0`);
+      assert.equal(await execute(`document.querySelector('#karaoke-highlight').textContent==='Word highlighting: Off'&&document.querySelector('#karaoke-highlight').getAttribute('aria-pressed')==='false'&&document.querySelectorAll('#karaoke-lyrics .karaoke-sung').length===0&&localStorage.getItem('nightwave-karaoke-highlight')==='false'`),true);
+      await execute(`document.querySelector('#karaoke-mode').click();audio.currentTime=.4;audio.dispatchEvent(new Event('seeked'));void 0`);
+      assert.equal(await execute(`document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Scrolling lines'&&document.querySelectorAll('#karaoke-lyrics .karaoke-sung').length===0`),true);
+      await execute(`document.querySelector('#karaoke-highlight').click();document.querySelector('#karaoke-mode').click();audio.currentTime=.1;audio.dispatchEvent(new Event('seeked'));void 0`);
+      assert.equal(await execute(`document.querySelectorAll('#karaoke-lyrics .karaoke-sung').length`),1);
+
+      await execute(`document.querySelector('#karaoke-mode').click();audio.currentTime=.4;audio.dispatchEvent(new Event('seeked'));void 0`);
+      assert.equal(await execute(`document.querySelector('#karaoke-mode').textContent`),'Karaoke Mode: Scrolling lines');
+      assert.equal(await execute(`document.querySelectorAll('#karaoke-lyrics .karaoke-line').length`),2);
+      assert.equal(await execute(`document.querySelectorAll('#karaoke-lyrics .karaoke-line:first-child .karaoke-sung').length`),3);
+      assert.equal(await execute(`document.querySelectorAll('#karaoke-lyrics .karaoke-line:last-child .karaoke-sung').length`),0);
+      assert.equal(await execute(`parseFloat(document.querySelector('#karaoke-lyrics .karaoke-line').style.opacity)<1`),true);
+      await execute(`audio.currentTime=.1;audio.dispatchEvent(new Event('seeked'));void 0`);
+      assert.equal(await execute(`document.querySelectorAll('#karaoke-lyrics .karaoke-sung').length`),1);
+      if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),'nightwave-karaoke-scrolling-preview.png'),(await window.webContents.capturePage()).toPNG());
+      await execute(`document.querySelector('#karaoke-mode').click();void 0`);
       await execute(`audio.currentTime=.7;audio.dispatchEvent(new Event('seeked'));void 0`);
       assert.equal(await execute(`document.querySelector('#karaoke-lyrics').textContent`),'Second karaoke line');
       await execute(`NightwaveKaraoke.refresh({path:${JSON.stringify(audioPath)}})`);
-      assert.equal(await execute(`document.querySelector('#karaoke-lyrics').hidden&&!document.querySelector('#karaoke-status').hidden`),true);
+      assert.equal(await execute(`document.querySelector('#karaoke-lyrics').hidden&&!document.querySelector('#karaoke-status').hidden&&!document.querySelector('#karaoke-mode').hidden&&!document.querySelector('#karaoke-highlight').hidden`),true);
       await execute(`document.querySelector('#karaoke-toggle').click();audio.currentTime=0;audio.play()`);
-      assert.equal(await execute(`document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='false'&&document.querySelector('#karaoke-lyrics').hidden&&document.querySelector('#karaoke-status').hidden`),true);
+      assert.equal(await execute(`document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='false'&&document.querySelector('#karaoke-toggle').textContent==='Karaoke: Off'&&document.querySelector('#karaoke-lyrics').hidden&&document.querySelector('#karaoke-status').hidden&&document.querySelector('#karaoke-mode').hidden&&document.querySelector('#karaoke-highlight').hidden`),true);
       await execute(`musicVisualizer.time=2;musicVisualizer.travel=0.43;for(let frame=0;frame<8;frame++)musicVisualizer.draw();document.querySelector('.toast')?.classList.remove('show');void 0`);
       assert.equal(await execute(`musicVisualizer.mid>0.01&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
       assert.equal(await execute(`musicVisualizer.analyser!==sidebarVisualizer.analyser&&musicVisualizer.analyser.smoothingTimeConstant<sidebarVisualizer.analyser.smoothingTimeConstant`),true);
@@ -308,7 +331,7 @@ app.on('browser-window-created', (_event, window) => {
       const signatures=[];
       const signature=()=>execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let value=0;for(let index=0;index<data.length;index+=400)value=(value*31+data[index]+data[index+1]*3+data[index+2]*7)>>>0;return value})()`);
       signatures.push(await signature());
-      for(const preset of [{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Midnight'},{id:'midnight',name:'Midnight',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Aurora'}]){
+      for(const preset of [{id:'midnight',name:'Midnight',next:'Aurora'},{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Midnight'}]){
         await execute(`document.querySelector('#visualizer-next').click();for(let frame=0;frame<4;frame++)musicVisualizer.draw();void 0`);
         assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),preset.name);
         assert.equal(await execute(`document.querySelector('#visualizer-next').getAttribute('aria-label')`),`Next visualizer: ${preset.next}`);
@@ -453,7 +476,7 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`!sidebarVisualizer.context&&!audio.paused`),true);
       await execute(`document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(sidebarVisualizer.analyser&&sidebarVisualizer.width>0){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Showing the equalizer did not initialize it'))}},10)})`);
       assert.equal(await execute(`!audio.paused&&sidebarVisualizer.context.state==='running'&&localStorage.getItem('nightwave-show-equalizer')==='true'`),true);
-      await execute(`document.querySelector('#view-visualizer').click();document.querySelector('#visualizer-next').click();document.querySelector('#visualizer-next').click()`);
+      await execute(`document.querySelector('#view-visualizer').click();document.querySelector('#visualizer-next').click();document.querySelector('#visualizer-next').click();document.querySelector('#visualizer-next').click()`);
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
       assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('.sidebar').hidden&&document.querySelector('#view-visualizer').getAttribute('aria-pressed')==='true'`),true);
       assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),'Kaleidoscope');
