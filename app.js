@@ -43,12 +43,17 @@ async function trackMetadata(file){
   const parseBlob=await metadataParser;
   if(parseBlob){try{
     const metadata=await parseBlob(file,{skipCovers:false}),tags=metadata.common;
-    return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album,artwork:await coverThumbnail(tags.picture)};
+    return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album,artwork:await coverThumbnail(tags.picture),hasTimedLyrics:NightwaveKaraokeCore.timedLyrics(metadata).some(line=>line.text.trim())};
   }catch{}}
   try{const tags=await embeddedTags(file);return {...defaults,title:tags.title?.trim()||defaults.title,artist:tags.artist?.trim()||defaults.artist,album:tags.album?.trim()||defaults.album}}catch{return defaults}
 }
 function artworkMarkup(artwork,fallback='♫',lazy=false){
   return fallback+(typeof artwork==='string'&&/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(artwork)?`<img src="${artwork}" alt="" draggable="false"${lazy?' loading="lazy"':''}>`:'');
+}
+const timedLyricsIcon='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><path d="M2 3h9M2 6h6M2 9h3"/><circle cx="10.5" cy="10.5" r="3.5"/><path d="M10.5 8.5v2l1.3.8"/></svg>';
+function timedLyricsMarker(track){
+  const label=track.hasTimedLyrics===true?'Embedded timed lyrics':track.hasTimedLyrics===false?'No embedded timed lyrics':'Timed lyrics have not been checked';
+  return `<span class="timed-lyrics-cell" title="${label}" aria-label="${label}">${track.hasTimedLyrics===true?timedLyricsIcon:''}</span>`;
 }
 function renderArtwork(){
   const track=state.tracks.find(item=>item.id===state.currentId);
@@ -89,7 +94,7 @@ function render(){ renderingTracks=true;try{const editFocus=captureMetadataFocus
  $('#playlist-list').innerHTML=state.playlists.map(p=>`<div class="playlist-item ${p.id===state.selected?'selected':''}" data-playlist-row="${escapeHTML(p.id)}" draggable="true" title="Drag to reorder this playlist"><button class="playlist-select" data-playlist="${escapeHTML(p.id)}"${p.id===state.selected?' aria-current="page"':''}><span>☷</span><span>${escapeHTML(p.name)}</span></button><span class="playlist-actions"><button data-rename="${escapeHTML(p.id)}" aria-label="Rename ${escapeHTML(p.name)}">✎</button><button data-delete="${escapeHTML(p.id)}" aria-label="Delete ${escapeHTML(p.name)}">×</button></span></div>`).join('');
  $('#empty-state').hidden=tracks.length>0; $('#track-area').hidden=!tracks.length;
  document.querySelectorAll('[data-sort]').forEach(button=>{const active=button.dataset.sort===state.sort.key;button.classList.toggle('sorted',active);button.querySelector('i').textContent=active?(state.sort.direction==='asc'?'↑':'↓'):''});
- $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to a playlist or another desktop app"><div class="title-cell">${t.artwork?`<button type="button" class="mini-art" data-cover="${escapeHTML(t.id)}" title="View album cover" aria-label="View album cover for ${escapeHTML(t.title)}">${artworkMarkup(t.artwork,'♫',true)}</button>`:`<div class="mini-art">${t.id===state.currentId?'▶':'♫'}</div>`}<span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span><span class="track-actions"><button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
+ $('#track-list').innerHTML=tracks.map(t=>`<div class="track-row ${t.id===state.currentId?'playing':''} ${state.selectedTrackIds.has(t.id)?'selected-track':''}" data-track="${escapeHTML(t.id)}" draggable="true" title="Fast double-click to play · Slow double-click a field to edit · Click to select · Ctrl/Cmd-click for multiple · Shift-click for a range · Drag to a playlist or another desktop app"><div class="title-cell">${t.artwork?`<button type="button" class="mini-art" data-cover="${escapeHTML(t.id)}" title="View album cover" aria-label="View album cover for ${escapeHTML(t.title)}">${artworkMarkup(t.artwork,'♫',true)}</button>`:`<div class="mini-art">${t.id===state.currentId?'▶':'♫'}</div>`}<span class="track-title" data-edit="title">${escapeHTML(t.title)}</span></div><span class="artist-cell" data-edit="artist">${escapeHTML(t.artist || 'Unknown artist')}</span><span class="album-cell" data-edit="album">${escapeHTML(t.album || '—')}</span><span class="time-cell">${time(t.duration)}</span>${timedLyricsMarker(t)}<span class="track-actions"><button class="row-menu" title="Song options" data-menu="${escapeHTML(t.id)}">•••</button></span></div>`).join('');
  renderArtwork();
  restoreMetadataEditor(editFocus);
  }finally{renderingTracks=false}
@@ -395,7 +400,7 @@ function setAppView(view){
 }
 $('#view-library').onclick=$('#visualizer-library').onclick=()=>setAppView('library');
 $('#view-visualizer').onclick=()=>setAppView('visualizer');
-$('#open-karaoke').onclick=()=>{setAppView('visualizer');musicVisualizer.setPreset('midnight');window.NightwaveKaraoke.enable()};
+$('#open-karaoke').onclick=()=>{setAppView('visualizer');musicVisualizer.setPreset('karaoke');window.NightwaveKaraoke.enable()};
 setAppView(localStorage.getItem('nightwave-view')==='visualizer'?'visualizer':'library');
 const setMaximizeButton=maximized=>{const button=$('#window-maximize');button.textContent=maximized?'❐':'□';button.title=maximized?'Restore':'Maximize';button.setAttribute('aria-label',button.title+' window')};$('#window-minimize').onclick=()=>window.electronAPI?.minimizeWindow();$('#window-maximize').onclick=async()=>setMaximizeButton(await window.electronAPI?.toggleMaximizeWindow());$('#window-close').onclick=()=>window.electronAPI?.closeWindow();window.electronAPI?.onWindowMaximized(setMaximizeButton);
 $('#sidebar-resizer').onpointerdown=e=>{e.preventDefault();const resizer=e.currentTarget;resizer.setPointerCapture(e.pointerId);document.body.classList.add('resizing-sidebar');const resize=event=>{const width=Math.max(sidebarMin,Math.min(sidebarMax,event.clientX));document.documentElement.style.setProperty('--sidebar-width',`${width}px`);localStorage.setItem('nightwave-sidebar-width',width)};const stop=event=>{document.body.classList.remove('resizing-sidebar');resizer.releasePointerCapture(event.pointerId);resizer.removeEventListener('pointermove',resize);resizer.removeEventListener('pointerup',stop);resizer.removeEventListener('pointercancel',stop)};resizer.addEventListener('pointermove',resize);resizer.addEventListener('pointerup',stop);resizer.addEventListener('pointercancel',stop)};
@@ -503,14 +508,14 @@ for(const mode of ['shuffle','repeat']){
 audio.ontimeupdate=()=>{const value=audio.duration?audio.currentTime/audio.duration*100:0;updateSongProgress(value);$('#current-time').textContent=time(audio.currentTime)};audio.onloadedmetadata=()=>{$('#duration').textContent=time(audio.duration)};audio.onplay=updateMediaSession;audio.onpause=updateMediaSession;audio.onended=()=>state.repeat?(audio.currentTime=0,audio.play()):nextTrack(false,true);$('#progress').oninput=e=>{updateSongProgress(Number(e.target.value));if(Number.isFinite(audio.duration)&&audio.duration>0){audio.currentTime=audio.duration*(e.target.value/100);$('#current-time').textContent=time(audio.currentTime)}};const savedVolumeValue=localStorage.getItem('nightwave-volume'),savedVolume=Number(savedVolumeValue),initialVolume=savedVolumeValue!==null&&Number.isFinite(savedVolume)&&savedVolume>=0&&savedVolume<=1?savedVolume:.8,volumeControl=$('#volume');audio.volume=initialVolume;volumeControl.value=initialVolume;volumeControl.style.setProperty('--value',`${initialVolume*100}%`);volumeControl.oninput=e=>{audio.volume=e.target.value;volumeControl.style.setProperty('--value',`${audio.volume*100}%`);localStorage.setItem('nightwave-volume',audio.volume)};
 const looksTemporaryTitle = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value||'').trim());
 async function refreshSavedMetadata(){
-  // Older library entries lack the artwork field. Read them once in the background.
+  // Read missing artwork and timed-lyrics status once in the background.
   let changed=0;
   for(const track of [...state.tracks]){
-    if(!track.file&&!(window.electronAPI&&track.path&&(track.artwork===undefined||looksTemporaryTitle(track.title))))continue;
+    if(!track.file&&!(window.electronAPI&&track.path&&(track.artwork===undefined||track.hasTimedLyrics===undefined||looksTemporaryTitle(track.title))))continue;
     try{
       const metadata=track.file?await trackMetadata(track.file):await window.electronAPI.readTrack(track.path);
       if(!state.tracks.includes(track))continue;
-      if(track.title!==metadata.title||track.artist!==metadata.artist||track.album!==metadata.album||track.artwork!==metadata.artwork){
+      if(track.title!==metadata.title||track.artist!==metadata.artist||track.album!==metadata.album||track.artwork!==metadata.artwork||track.hasTimedLyrics!==metadata.hasTimedLyrics){
         Object.assign(track,metadata);await put('tracks',track);if(++changed%20===0)render();
       }
     }catch{}

@@ -18,7 +18,8 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Show a song in the system file manager
 - Shuffle, repeat, seek, and control volume
 - View a live sunset-colored audio spectrum in the sidebar
-- Switch the main panels to Space tunnel, Aurora, or Kaleidoscope visualizers while keeping playback controls visible
+- Switch the main panels to Space tunnel, Midnight, Karaoke lounge, Aurora, or Kaleidoscope visualizers while keeping playback controls visible
+- Open Karaoke with a still lounge-stage backdrop and embedded timed lyrics
 - Sync a playlist to an MTP-connected phone on Linux with GIO or KDE KIO
 - Store library and playlist data locally on the device
 

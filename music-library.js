@@ -1,5 +1,6 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { timedLyrics } = require('./karaoke-core');
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac', '.opus']);
 const isTemporaryTag = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value || '').trim());
@@ -57,7 +58,8 @@ function createLibrary({ fileSystem = fs, parseFile = async (...args) => (await 
           title: preferredTag(metadata, metadata.common.title, ['TIT2', 'TT2', 'title']) || fallback,
           artist: preferredTag(metadata, metadata.common.artist, ['TPE1', 'TP1', 'artist']) || 'Unknown artist',
           album: preferredTag(metadata, metadata.common.album, ['TALB', 'TAL', 'album']) || 'Local files',
-          duration: metadata.format.duration || 0
+          duration: metadata.format.duration || 0,
+          hasTimedLyrics: timedLyrics(metadata).some(line => line.text.trim())
         };
         const pictures = metadata.common.picture || [];
         const picture = pictures.find(item => /front/i.test(item.type || item.name || '')) || pictures[0];

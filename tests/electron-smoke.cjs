@@ -46,7 +46,7 @@ function finish(error) {
   if (finished) return;finished = true;clearTimeout(timeout);
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
   if (error) { console.error(error); if(fatalErrors.length)console.error('Renderer errors:',fatalErrors); }
-  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, four main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, karaoke timing and controls, progress alignment, click timing, IndexedDB rollback).');
+  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, five main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, karaoke timing and controls, progress alignment, click timing, IndexedDB rollback).');
   // Only remove this runner's validated mkdtemp directory.
   fs.rmSync(temporary, { recursive: true, force: true });
   app.exit(error ? 1 : 0);
@@ -64,10 +64,17 @@ app.on('browser-window-created', (_event, window) => {
       // Wait until the actual app has finished opening its database.
       await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(db){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Database unavailable'))}},20)})`);
       assert.equal(await execute(`Boolean(window.electronAPI && NightwaveCore)`), true);
-      // The library shortcut opens Midnight and enables karaoke with the default preferences.
-      assert.equal(await execute(`document.querySelector('#play-all').nextElementSibling.id`),'open-karaoke');
+      // Timed lyrics occupy their own quiet column between time and options.
+      assert.deepEqual(await execute(`(()=>{const saved=state.tracks;state.tracks=[{id:'timed',title:'Timed',artist:'Artist',duration:5,hasTimedLyrics:true},{id:'plain',title:'Plain',artist:'Artist',duration:5,hasTimedLyrics:false}];render();const cells=[...document.querySelectorAll('.timed-lyrics-cell')];const result=cells.map(cell=>({marker:!!cell.querySelector('svg'),label:cell.getAttribute('aria-label'),before:cell.previousElementSibling.className,after:cell.nextElementSibling.className}));state.tracks=saved;render();return result})()`),[
+        {marker:true,label:'Embedded timed lyrics',before:'time-cell',after:'track-actions'},
+        {marker:false,label:'No embedded timed lyrics',before:'time-cell',after:'track-actions'}
+      ]);
+      // The persistent header shortcut opens Karaoke lounge and enables karaoke.
+      assert.equal(await execute(`document.querySelector('#show-playing').nextElementSibling.id`),'open-karaoke');
+      assert.equal(await execute(`document.querySelector('#show-playing').textContent.trim()`),'♫Go to playing');
+      assert.equal(await execute(`document.querySelector('#open-karaoke').closest('.topbar')!==null&&document.querySelector('.content-actions #open-karaoke')===null&&getComputedStyle(document.querySelector('#open-karaoke')).webkitAppRegion==='no-drag'`),true);
       await execute(`document.querySelector('#open-karaoke').click()`);
-      assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('#visualizer-name').textContent==='Midnight'&&document.querySelector('#karaoke-toggle').textContent==='Karaoke: On'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Scrolling lines'&&document.querySelector('#karaoke-highlight').textContent==='Word highlighting: On'&&state.currentId===null`),true);
+      assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('#visualizer-name').textContent==='Karaoke lounge'&&document.querySelector('#karaoke-toggle').textContent==='Karaoke: On'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Scrolling lines'&&document.querySelector('#karaoke-highlight').textContent==='Word highlighting: On'&&state.currentId===null`),true);
       await execute(`document.querySelector('#open-karaoke').click()`);
       assert.equal(await execute(`document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')`),'true');
       await execute(`document.querySelector('#karaoke-toggle').click();musicVisualizer.setPreset('tunnel');setAppView('library')`);
@@ -346,7 +353,7 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`musicVisualizer.mid>0.01&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
       assert.equal(await execute(`musicVisualizer.analyser!==sidebarVisualizer.analyser&&musicVisualizer.analyser.smoothingTimeConstant<sidebarVisualizer.analyser.smoothingTimeConstant`),true);
       // Freeze the scene and compare an attack with its resting frame. Each
-      // preset must visibly respond, and reduced motion suppresses the pulse.
+      // animated preset must respond; still scenes and reduced motion suppress pulses.
       const beatResponses=await execute(`(()=>{
         const visualizer=musicVisualizer,ctx=visualizer.paint,canvas=visualizer.canvas;
         const savedBeat=visualizer.beat,savedMotion=visualizer.motion;
@@ -361,7 +368,7 @@ app.on('browser-window-created', (_event, window) => {
           return {id:preset.id,difference,reducedDifference};
         })}finally{visualizer.beat=savedBeat;visualizer.motion=savedMotion;visualizer.draw()}
       })()`);
-      for(const response of beatResponses){if(response.id==='midnight')assert.equal(response.difference,0,JSON.stringify(response));else assert(response.difference>1000,JSON.stringify(response));assert.equal(response.reducedDifference,0,JSON.stringify(response))}
+      for(const response of beatResponses){if(['midnight','karaoke'].includes(response.id))assert.equal(response.difference,0,JSON.stringify(response));else assert(response.difference>1000,JSON.stringify(response));assert.equal(response.reducedDifference,0,JSON.stringify(response))}
       // Optional screenshot for visual inspection; normal checks keep no images.
       if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),'nightwave-tunnel-preview.png'),(await window.webContents.capturePage()).toPNG());
       const tunnelPixels=await execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let lit=0,maximum=0;for(let index=0;index<data.length;index+=400){const value=Math.max(data[index],data[index+1],data[index+2]);maximum=Math.max(maximum,value);if(value>80)lit++}return {lit,maximum,width:canvas.width,height:canvas.height}})()`);
@@ -371,19 +378,19 @@ app.on('browser-window-created', (_event, window) => {
       const signatures=[];
       const signature=()=>execute(`(()=>{const canvas=musicVisualizer.canvas,data=musicVisualizer.paint.getImageData(0,0,canvas.width,canvas.height).data;let value=0;for(let index=0;index<data.length;index+=400)value=(value*31+data[index]+data[index+1]*3+data[index+2]*7)>>>0;return value})()`);
       signatures.push(await signature());
-      for(const preset of [{id:'midnight',name:'Midnight',next:'Aurora'},{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Midnight'}]){
+      for(const preset of [{id:'midnight',name:'Midnight',next:'Karaoke lounge'},{id:'karaoke',name:'Karaoke lounge',next:'Aurora'},{id:'aurora',name:'Aurora',next:'Kaleidoscope'},{id:'kaleidoscope',name:'Kaleidoscope',next:'Space tunnel'},{id:'tunnel',name:'Space tunnel',next:'Midnight'}]){
         await execute(`document.querySelector('#visualizer-next').click();for(let frame=0;frame<4;frame++)musicVisualizer.draw();void 0`);
         assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),preset.name);
         assert.equal(await execute(`document.querySelector('#visualizer-next').getAttribute('aria-label')`),`Next visualizer: ${preset.next}`);
         assert.equal(await execute(`localStorage.getItem('nightwave-visualizer')`),preset.id);
         assert.equal(await execute(`!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource&&sidebarVisualizer.context===window.toggleSpectrumContext`),true);
-        if(preset.id==='midnight')assert.equal(await execute(`musicVisualizer.frame`),0);
+        if(['midnight','karaoke'].includes(preset.id))assert.equal(await execute(`musicVisualizer.frame`),0);
         if(preset.id!=='tunnel'){
           signatures.push(await signature());
           if(process.argv.includes('--capture-visualizer'))fs.writeFileSync(path.join(os.tmpdir(),`nightwave-${preset.id}-preview.png`),(await window.webContents.capturePage()).toPNG());
         }
       }
-      assert.equal(new Set(signatures).size,4);
+      assert.equal(new Set(signatures).size,5);
       await execute(`document.querySelector('#visualizer-library').click();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
       assert.equal(await execute(`document.querySelector('#tunnel-visualizer').hidden&&!document.querySelector('.sidebar').hidden&&!document.querySelector('.main-content').hidden&&!document.querySelector('#sidebar-visualizer').hidden&&musicVisualizer.frame===0`),true);
       assert.equal(await execute(`state.selected===window.savedLibraryView.selected&&state.query===window.savedLibraryView.query&&!audio.paused&&sidebarVisualizer.source===window.toggleSpectrumSource`),true);
@@ -586,7 +593,7 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`!sidebarVisualizer.context&&!audio.paused`),true);
       await execute(`document.querySelector('#view-menu summary').click();document.querySelector('#show-equalizer').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(sidebarVisualizer.analyser&&sidebarVisualizer.width>0){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Showing the equalizer did not initialize it'))}},10)})`);
       assert.equal(await execute(`!audio.paused&&sidebarVisualizer.context.state==='running'&&localStorage.getItem('nightwave-show-equalizer')==='true'`),true);
-      await execute(`document.querySelector('#view-visualizer').click();document.querySelector('#visualizer-next').click();document.querySelector('#visualizer-next').click();document.querySelector('#visualizer-next').click()`);
+      await execute(`document.querySelector('#view-visualizer').click();musicVisualizer.setPreset('kaleidoscope')`);
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
       assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('.sidebar').hidden&&document.querySelector('#view-visualizer').getAttribute('aria-pressed')==='true'`),true);
       assert.equal(await execute(`document.querySelector('#visualizer-name').textContent`),'Kaleidoscope');
@@ -605,7 +612,7 @@ app.on('browser-window-created', (_event, window) => {
       await execute(`localStorage.setItem('nightwave-karaoke-mode','current');localStorage.setItem('nightwave-karaoke-highlight','false')`);
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
       await execute(`setAppView('library');document.querySelector('#open-karaoke').click()`);
-      assert.equal(await execute(`document.querySelector('#visualizer-name').textContent==='Midnight'&&localStorage.getItem('nightwave-visualizer')==='midnight'&&document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='true'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Current line'&&document.querySelector('#karaoke-highlight').getAttribute('aria-pressed')==='false'&&!document.querySelector('#karaoke-highlight').hidden&&localStorage.getItem('nightwave-karaoke-mode')==='current'&&localStorage.getItem('nightwave-karaoke-highlight')==='false'`),true);
+      assert.equal(await execute(`document.querySelector('#visualizer-name').textContent==='Karaoke lounge'&&localStorage.getItem('nightwave-visualizer')==='karaoke'&&document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='true'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Current line'&&document.querySelector('#karaoke-highlight').getAttribute('aria-pressed')==='false'&&!document.querySelector('#karaoke-highlight').hidden&&localStorage.getItem('nightwave-karaoke-mode')==='current'&&localStorage.getItem('nightwave-karaoke-highlight')==='false'`),true);
       assert.deepEqual(fatalErrors, []);
       finish();
     } catch (error) { finish(error); }

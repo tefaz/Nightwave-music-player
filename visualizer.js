@@ -171,6 +171,7 @@ class MusicVisualizer {
     this.presets = [
       { id: 'tunnel', name: 'Space tunnel', render: 'drawTunnel' },
       { id: 'midnight', name: 'Midnight', render: 'drawMidnight', static: true },
+      { id: 'karaoke', name: 'Karaoke lounge', render: 'drawKaraoke', static: true },
       { id: 'aurora', name: 'Aurora', render: 'drawAurora' },
       { id: 'kaleidoscope', name: 'Kaleidoscope', render: 'drawKaleidoscope' }
     ];
@@ -409,6 +410,67 @@ class MusicVisualizer {
       }
       ctx.lineTo(width, height);ctx.closePath();
       ctx.fillStyle = ['#111a29', '#0b1220', '#070d17'][layer];ctx.fill();
+    }
+  }
+
+  drawKaraoke() {
+    const { width, height, paint: ctx } = this;
+    // A still, softly lit stage leaves the lyrics clear and brightness steady.
+    const backdrop = ctx.createLinearGradient(0, 0, 0, height);
+    backdrop.addColorStop(0, '#201720');
+    backdrop.addColorStop(0.5, '#151018');
+    backdrop.addColorStop(1, '#08090e');
+    ctx.fillStyle = backdrop;
+    ctx.fillRect(0, 0, width, height);
+
+    for (const side of [0, 1]) {
+      const x = width * (side ? 0.86 : 0.14);
+      const glow = ctx.createRadialGradient(x, height * 0.08, 0, x, height * 0.08, height * 0.72);
+      glow.addColorStop(0, 'rgba(241,188,122,0.13)');
+      glow.addColorStop(0.45, 'rgba(200,136,99,0.035)');
+      glow.addColorStop(1, 'rgba(200,136,99,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, width, height);
+
+      const beam = ctx.createLinearGradient(0, height * 0.07, 0, height * 0.68);
+      beam.addColorStop(0, 'rgba(250,211,152,0.08)');
+      beam.addColorStop(1, 'rgba(250,211,152,0)');
+      ctx.fillStyle = beam;
+      ctx.beginPath();ctx.moveTo(x, height * 0.07);
+      ctx.lineTo(width * (side ? 0.46 : 0.2), height * 0.68);
+      ctx.lineTo(width * (side ? 0.8 : 0.54), height * 0.68);
+      ctx.closePath();ctx.fill();
+
+      // Low-contrast folds frame the stage without filling the lyric area.
+      for (let fold = 0; fold < 7; fold++) {
+        const foldWidth = width * 0.018;
+        const left = side ? width - (fold + 1) * foldWidth : fold * foldWidth;
+        const curtain = ctx.createLinearGradient(left, 0, left + foldWidth, 0);
+        curtain.addColorStop(0, '#151016');
+        curtain.addColorStop(0.5, '#281b24');
+        curtain.addColorStop(1, '#181219');
+        ctx.fillStyle = curtain;
+        ctx.fillRect(left, 0, foldWidth, height);
+      }
+    }
+
+    const floor = ctx.createRadialGradient(width * 0.5, height * 0.96, 0, width * 0.5, height * 0.96, width * 0.48);
+    floor.addColorStop(0, 'rgba(192,143,94,0.07)');
+    floor.addColorStop(1, 'rgba(192,143,94,0)');
+    ctx.fillStyle = floor;
+    ctx.beginPath();ctx.ellipse(width * 0.5, height * 0.96, width * 0.46, height * 0.09, 0, 0, Math.PI * 2);ctx.fill();
+
+    // An understated microphone sits above and to the side of the lyrics.
+    const scale = Math.min(width, height), x = width * 0.25, y = height * 0.36;
+    ctx.strokeStyle = '#756054';ctx.fillStyle = '#30292b';
+    ctx.lineWidth = Math.max(1, scale * 0.002);ctx.lineCap = 'round';
+    ctx.beginPath();ctx.moveTo(x, y + scale * 0.054);ctx.lineTo(x, height * 0.63);
+    ctx.moveTo(x - scale * 0.035, height * 0.65);ctx.lineTo(x, height * 0.63);ctx.lineTo(x + scale * 0.035, height * 0.65);ctx.stroke();
+    ctx.beginPath();ctx.roundRect(x - scale * 0.014, y, scale * 0.028, scale * 0.054, scale * 0.014);ctx.fill();ctx.stroke();
+    ctx.strokeStyle = '#8c7260';
+    for (let line = 0; line < 4; line++) {
+      const top = y + scale * (0.012 + line * 0.008);
+      ctx.beginPath();ctx.moveTo(x - scale * 0.008, top);ctx.lineTo(x + scale * 0.008, top);ctx.stroke();
     }
   }
 

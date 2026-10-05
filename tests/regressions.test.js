@@ -307,6 +307,26 @@ test('scanning bounds metadata work, caches unchanged files, and retries changed
   assert.equal(progress.at(-1).completed, 25);
 });
 
+test('library timed-lyrics status distinguishes SYLT, LRC, plain lyrics and changed tags', async () => {
+  let version=1, lyrics=[], parses=0;
+  const library=createLibrary({
+    fileSystem:{stat:async()=>({isFile:()=>true,size:10,mtimeMs:version,ctimeMs:version})},
+    parseFile:async()=>{parses++;return {common:{lyrics},format:{duration:5}}}
+  });
+  const read=()=>library.readTrack('/music/lyrics.mp3');
+  assert.equal((await read()).hasTimedLyrics,false);
+  lyrics=[{contentType:1,timeStampFormat:2,syncText:[{text:'Timed verse',timestamp:1000}]}];version++;
+  assert.equal((await read()).hasTimedLyrics,true);
+  assert.equal((await read()).hasTimedLyrics,true);
+  assert.equal(parses,2);
+  lyrics=[{text:'[00:01.20]LRC verse'}];version++;
+  assert.equal((await read()).hasTimedLyrics,true);
+  lyrics=[{text:'Plain verse'}];version++;
+  assert.equal((await read()).hasTimedLyrics,false);
+  lyrics=[{text:'[00:01.20]'}];version++;
+  assert.equal((await read()).hasTimedLyrics,false);
+});
+
 test('embedded artwork prefers the front cover, is cached, and updates with file changes', async () => {
   let version=1,parses=0,conversions=0;
   const back={type:'Cover (back)',data:Buffer.from('back')},front={type:'Cover (front)',data:Buffer.from('front')};

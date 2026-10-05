@@ -38,7 +38,7 @@
           <input id="file-input" type="file" accept="audio/*" multiple hidden />
           <input id="folder-input" type="file" accept="audio/*" webkitdirectory directory multiple hidden />
         </nav>
-        <div class="top-actions"><button id="show-playing" class="show-playing" type="button" aria-label="Show currently playing song" title="Show currently playing song" disabled><span aria-hidden="true">♫</span><span>Now playing</span></button><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Filter this page" aria-label="Filter current songs" /></label></div>
+        <div class="top-actions"><button id="show-playing" class="show-playing header-action" type="button" aria-label="Go to playing" title="Go to playing" disabled><span aria-hidden="true">♫</span><span>Go to playing</span></button><button id="open-karaoke" class="header-action" type="button">Karaoke</button><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Filter this page" aria-label="Filter current songs" /></label></div>
         <div class="window-controls" aria-label="Window controls"><button id="window-minimize" type="button" aria-label="Minimize window" title="Minimize">—</button><button id="window-maximize" type="button" aria-label="Maximize window" title="Maximize">□</button><button id="window-close" class="window-close" type="button" aria-label="Close window" title="Close">×</button></div>
       </header>
 
@@ -56,13 +56,13 @@
       <main class="main-content">
         <div class="content-head">
           <div><p class="eyebrow" id="view-kicker">LIBRARY</p><h1 id="view-title">All music</h1><p id="view-subtitle" class="subtitle">Your saved collection will appear here.</p></div>
-          <div class="content-actions"><button id="play-all" class="play-all">▶ <span>Play all</span></button><button id="open-karaoke" class="play-all" type="button">Karaoke</button><button id="sync-playlist" class="sync-playlist" type="button" title="Copy this playlist to your connected phone">⇧ <span>Sync to phone</span></button></div>
+          <div class="content-actions"><button id="play-all" class="play-all">▶ <span>Play all</span></button><button id="sync-playlist" class="sync-playlist" type="button" title="Copy this playlist to your connected phone">⇧ <span>Sync to phone</span></button></div>
         </div>
         <div id="empty-state" class="empty-state">
           <div class="empty-wave">♫</div><h2>Your library is quiet</h2><p>Load a music folder or add audio files to start listening.</p><button id="empty-load" class="primary-button">＋ Load music folder</button>
         </div>
         <div id="track-area" hidden>
-          <div class="track-header"><button data-sort="title">TITLE <i></i></button><button data-sort="artist">ARTIST NAME <i></i></button><button data-sort="album">ALBUM NAME <i></i></button><button data-sort="duration">TIME <i></i></button><span></span></div>
+          <div class="track-header"><button data-sort="title">TITLE <i></i></button><button data-sort="artist">ARTIST NAME <i></i></button><button data-sort="album">ALBUM NAME <i></i></button><button data-sort="duration">TIME <i></i></button><span class="timed-lyrics-heading" title="Embedded timed lyrics" aria-label="Embedded timed lyrics"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><path d="M2 3h9M2 6h6M2 9h3"/><circle cx="10.5" cy="10.5" r="3.5"/><path d="M10.5 8.5v2l1.3.8"/></svg></span><span></span></div>
           <div id="track-list" class="track-list"></div>
         </div>
       </main>
@@ -92,8 +92,8 @@
     </div>
     <audio id="audio"></audio>
     <script src="renderer-core.js"></script>
-    <script src="app.js"></script>
     <script src="karaoke-core.js"></script>
+    <script src="app.js"></script>
     <script src="karaoke.js"></script>
     <script src="visualizer.js"></script>
   </body>
