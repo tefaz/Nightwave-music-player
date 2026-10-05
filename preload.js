@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickMusicFolder: onProgress => scan('music:pick-folder', [], onProgress),
   refreshMusicFolders: (directories, onProgress) => scan('music:refresh-folders', [directories], onProgress),
   readTrack: filePath => ipcRenderer.invoke('music:read-track', filePath),
+  readArtwork: filePath => ipcRenderer.invoke('music:read-artwork', filePath),
+  openTracksmith: () => ipcRenderer.invoke('app:open-tracksmith'),
   showInFolder: filePath => ipcRenderer.invoke('music:show-in-folder', filePath),
   startExternalDrag: filePaths => ipcRenderer.send('music:start-external-drag', filePaths),
   getPathForFile: file => webUtils.getPathForFile(file),

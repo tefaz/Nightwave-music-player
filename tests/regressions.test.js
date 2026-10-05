@@ -464,6 +464,40 @@ test('blob playback releases URLs on replacement, failure, and unload', async ()
   await context.playTrack('a');assert.deepEqual(revoked, created);assert.equal(state.objectUrl, null);
 });
 
+test('only automatic track changes center the playing song', async () => {
+  const source = await fs.readFile(path.join(__dirname, '../app.js'), 'utf8');
+  const centered = [];
+  const state = { tracks: ['a', 'b', 'c'].map(id => ({ id, file: {} })), objectUrl: null, shuffle: false, repeat: false };
+  const audio = { pause() {}, removeAttribute() {}, load() {}, play: async () => {} };
+  const context = { state, audio, window: {}, playbackRequest: 0, playbackQueue: new PlaybackQueue(),
+    visibleTracks: () => state.tracks, URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+    $: selector => selector === '#track-list .track-row.playing'
+      ? { scrollIntoView: options => centered.push({ id: state.currentId, block: options.block }) }
+      : { style: { setProperty() {} } },
+    render() {}, toast() {}, updateMediaSession() {}
+  };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function releaseAudio('), source.indexOf('async function newPlaylist(')), context);
+  vm.runInContext(source.slice(source.indexOf('audio.onended='), source.indexOf("$('#progress').oninput=")), context);
+  await context.playTrack('a');
+  await context.nextTrack();
+  assert.equal(state.currentId, 'b');
+  await context.nextTrack(true);
+  assert.equal(state.currentId, 'a');
+  assert.deepEqual(centered, []);
+  await audio.onended();
+  assert.equal(state.currentId, 'b');
+  assert.deepEqual(centered, [{ id: 'b', block: 'center' }]);
+  state.repeat = true;
+  await audio.onended();
+  assert.equal(state.currentId, 'b');
+  assert.equal(centered.length, 1);
+  state.repeat = false;
+  context.playbackQueue.clear();
+  await audio.onended();
+  assert.deepEqual(centered, [{ id: 'b', block: 'center' }, { id: 'a', block: 'center' }]);
+});
+
 test('stale asynchronous playback requests cannot replace a newer song', async () => {
   const source = await fs.readFile(path.join(__dirname, '../app.js'), 'utf8');
   let resolveFirst;

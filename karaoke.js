@@ -89,7 +89,16 @@
       }
       if (token !== request) return;
       lines = result;
-      status.textContent = lines.length ? '' : 'This song has no timed lyrics in its metadata.';
+      status.textContent = '';
+      if (!lines.length) {
+        status.innerHTML = 'This song has no timed lyrics in its metadata.<br>You can add them with <a href="https://github.com/tefaz/Tracksmith-mp3-enricher" target="_blank" rel="noopener noreferrer">Tracksmith on GitHub</a> or another tool that embeds standard synchronized (SYLT) or LRC lyrics.';
+        status.querySelector('a').onclick = event => {
+          if (window.electronAPI?.openTracksmith) {
+            event.preventDefault();
+            window.electronAPI.openTracksmith();
+          }
+        };
+      }
       status.hidden = Boolean(lines.length);
       sync();
     } catch {
@@ -97,15 +106,17 @@
       status.textContent = 'Timed lyrics could not be read from this file.';
     }
   }
-  button.onclick = () => {
-    enabled = !enabled;
+  function setEnabled(value) {
+    if (enabled === value) return;
+    enabled = value;
     button.textContent = enabled ? 'Karaoke: On' : 'Karaoke: Off';
     button.setAttribute('aria-pressed', String(enabled));
     modeButton.hidden = !enabled;
     highlightButton.hidden = !enabled;
     refresh(state.tracks.find(track => track.id === state.currentId));
     sync();
-  };
+  }
+  button.onclick = () => setEnabled(!enabled);
   modeButton.onclick = () => {
     mode = mode === 'current' ? 'scrolling' : 'current';
     localStorage.setItem('nightwave-karaoke-mode', mode);
@@ -121,5 +132,5 @@
   motion.addEventListener('change', sync);
   for (const event of ['play', 'pause', 'seeked', 'seeking', 'timeupdate', 'ended']) audio.addEventListener(event, sync);
   new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
-  window.NightwaveKaraoke = { refresh, clear: () => refresh(null) };
+  window.NightwaveKaraoke = { refresh, clear: () => refresh(null), enable: () => setEnabled(true) };
 })();

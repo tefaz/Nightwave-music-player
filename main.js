@@ -177,6 +177,16 @@ handle('music:refresh-folders', async (event, directories, requestId) => {
   return library.readMusicFolders(directories.map(absolutePath), scanProgress(event, requestId));
 });
 handle('music:read-track', async (_event, filePath) => library.readTrack(await audioFile(filePath)));
+handle('app:open-tracksmith', () => shell.openExternal('https://github.com/tefaz/Tracksmith-mp3-enricher'));
+handle('music:read-artwork', async (_event, filePath) => {
+  const validatedPath = await audioFile(filePath);
+  const metadata = await (await import('music-metadata')).parseFile(validatedPath, { skipCovers: false });
+  const pictures = metadata.common.picture || [];
+  const picture = pictures.find(item => /front/i.test(item.type || item.name || '')) || pictures[0];
+  if (!picture?.data?.length) return null;
+  const image = nativeImage.createFromBuffer(Buffer.from(picture.data));
+  return image.isEmpty() ? null : image.toDataURL();
+});
 handle('music:show-in-folder', async (_event, filePath) => shell.showItemInFolder(await audioFile(filePath)));
 ipcMain.on('music:start-external-drag', async (event, filePaths) => {
   try {

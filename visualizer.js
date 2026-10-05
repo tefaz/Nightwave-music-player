@@ -215,8 +215,14 @@ class MusicVisualizer {
   }
 
   nextPreset() {
+    this.setPreset(this.presets[(this.presetIndex + 1) % this.presets.length].id);
+  }
+
+  setPreset(id) {
+    const index = this.presets.findIndex(preset => preset.id === id);
+    if (index < 0) return;
     this.stopDrawing();
-    this.presetIndex = (this.presetIndex + 1) % this.presets.length;
+    this.presetIndex = index;
     localStorage.setItem('nightwave-visualizer', this.presets[this.presetIndex].id);
     this.updatePreset();
     this.draw();

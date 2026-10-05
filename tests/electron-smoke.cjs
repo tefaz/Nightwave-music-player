@@ -1,5 +1,5 @@
 // Isolated headless desktop checks. The --no-sandbox flag belongs only to this test runner.
-const { app, BrowserWindow, globalShortcut, nativeImage, net } = require('electron');
+const { app, BrowserWindow, globalShortcut, nativeImage, net, shell } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -64,6 +64,13 @@ app.on('browser-window-created', (_event, window) => {
       // Wait until the actual app has finished opening its database.
       await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(db){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Database unavailable'))}},20)})`);
       assert.equal(await execute(`Boolean(window.electronAPI && NightwaveCore)`), true);
+      // The library shortcut opens Midnight and enables karaoke with the default preferences.
+      assert.equal(await execute(`document.querySelector('#play-all').nextElementSibling.id`),'open-karaoke');
+      await execute(`document.querySelector('#open-karaoke').click()`);
+      assert.equal(await execute(`!document.querySelector('#tunnel-visualizer').hidden&&document.querySelector('#visualizer-name').textContent==='Midnight'&&document.querySelector('#karaoke-toggle').textContent==='Karaoke: On'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Scrolling lines'&&document.querySelector('#karaoke-highlight').textContent==='Word highlighting: On'&&state.currentId===null`),true);
+      await execute(`document.querySelector('#open-karaoke').click()`);
+      assert.equal(await execute(`document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')`),'true');
+      await execute(`document.querySelector('#karaoke-toggle').click();musicVisualizer.setPreset('tunnel');setAppView('library')`);
       // Header menus must be clickable in the draggable title bar, exclusive,
       // dismissible, and still connected to the existing file input action.
       assert.deepEqual(await execute(`Array.from(document.querySelectorAll('#files-menu button'),button=>button.id)`),['load-folder','refresh-folders','manage-folders','add-files','clear-library']);
@@ -162,6 +169,31 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`(async()=>{const image=document.querySelector('.mini-art img');await image.decode();return image.naturalWidth})()`),128);
       await execute(`state.playlists.push({id:'cover-playlist',name:'Covers',trackKeys:[${JSON.stringify(coverPath)}]});state.selected='cover-playlist';state.currentId='cover-test';render()`);
       assert.equal(await execute(`document.querySelector('.mini-art img').src===state.tracks[0].artwork&&document.querySelector('#artwork img').src===state.tracks[0].artwork`),true);
+      // The viewer reads the original embedded image, rather than enlarging the thumbnail.
+      assert.equal(await execute(`(()=>{const cover=document.querySelector('#artwork'),rect=cover.getBoundingClientRect(),footer=document.querySelector('.player'),bounds=footer.getBoundingClientRect(),style=getComputedStyle(cover);return bounds.height===126&&rect.left===bounds.left&&rect.top===bounds.top+footer.clientTop&&rect.bottom===bounds.bottom&&rect.width===rect.height&&style.boxShadow==='none'&&style.borderRadius==='0px'})()`),true);
+      await execute(`document.querySelector('#artwork').focus();openAlbumCover()`);
+      const coverView=await execute(`(async()=>{const dialog=document.querySelector('.cover-viewer'),image=dialog.querySelector('img');await image.decode();await new Promise(resolve=>requestAnimationFrame(resolve));const rect=image.getBoundingClientRect(),style=getComputedStyle(dialog);return {width:image.naturalWidth,height:image.naturalHeight,centerX:rect.left+rect.width/2,centerY:rect.top+rect.height/2,viewportWidth:innerWidth,viewportHeight:innerHeight,border:style.borderWidth,background:style.backgroundColor}})()`);
+      assert.equal(coverView.width,256);assert.equal(coverView.height,256);
+      assert(Math.abs(coverView.centerX-coverView.viewportWidth/2)<1);
+      assert(Math.abs(coverView.centerY-coverView.viewportHeight/2)<1);
+      assert.equal(coverView.border,'0px');assert.equal(coverView.background,'rgba(0, 0, 0, 0)');
+      await execute(`document.querySelector('.cover-close').click();new Promise(resolve=>requestAnimationFrame(resolve))`);
+      assert.equal(await execute(`!document.querySelector('.cover-viewer')&&document.activeElement===document.querySelector('#artwork')`),true);
+      // Browser-imported files also preserve the full image dimensions.
+      await execute(`window.coverNativePath=state.tracks[0].path;state.tracks[0].path=null;state.tracks[0].file=new File([new Uint8Array(${JSON.stringify([...fs.readFileSync(coverPath)])})],'cover.mp3',{type:'audio/mpeg'});openAlbumCover()`);
+      assert.equal(await execute(`(async()=>{const image=document.querySelector('.cover-viewer img');await image.decode();return image.naturalWidth})()`),256);
+      window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+      window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+      await execute(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      assert.equal(await execute(`Boolean(document.querySelector('.cover-viewer'))`),false);
+      await execute(`state.tracks[0].path=window.coverNativePath;state.tracks[0].file=null`);
+      // A single click on a row thumbnail opens that song's cover without starting playback.
+      await execute(`state.currentId=null;render();window.coverSelectionBefore=[...state.selectedTrackIds];document.querySelector('.mini-art img').click();new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{const image=document.querySelector('.cover-viewer img');if(image?.complete&&image.naturalWidth){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Row cover did not open'))}},10)})`);
+      assert.equal(await execute(`document.querySelector('.cover-viewer img').naturalWidth`),256);
+      assert.equal(await execute(`state.currentId`),null);
+      assert.equal(await execute(`JSON.stringify([...state.selectedTrackIds])===JSON.stringify(window.coverSelectionBefore)`),true);
+      await execute(`document.querySelector('.cover-close').click();new Promise(resolve=>requestAnimationFrame(resolve))`);
+      await execute(`state.currentId='cover-test';render()`);
       // Add-files uses the browser parser, so verify that route on the same tagged MP3.
       const browserCover=await execute(`trackMetadata(new File([new Uint8Array(${JSON.stringify([...fs.readFileSync(coverPath)])})],'cover.mp3',{type:'audio/mpeg'}))`);
       assert.equal(browserCover.title,'Covered song');
@@ -300,6 +332,14 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`document.querySelector('#karaoke-lyrics').textContent`),'Second karaoke line');
       await execute(`NightwaveKaraoke.refresh({path:${JSON.stringify(audioPath)}})`);
       assert.equal(await execute(`document.querySelector('#karaoke-lyrics').hidden&&!document.querySelector('#karaoke-status').hidden&&!document.querySelector('#karaoke-mode').hidden&&!document.querySelector('#karaoke-highlight').hidden`),true);
+      assert.equal(await execute(`(()=>{const status=document.querySelector('#karaoke-status'),link=status.querySelector('a');return status.textContent.includes('or another tool')&&status.textContent.includes('SYLT')&&status.textContent.includes('LRC')&&link.textContent==='Tracksmith on GitHub'&&getComputedStyle(link).pointerEvents==='auto'})()`),true);
+      const externalLinks=[],originalOpenExternal=shell.openExternal;
+      shell.openExternal=async url=>{externalLinks.push(url)};
+      try{
+        await execute(`(()=>{const link=document.querySelector('#karaoke-status a'),event=new MouseEvent('click',{bubbles:true,cancelable:true});link.dispatchEvent(event);return event.defaultPrevented})()`);
+        await execute(`window.electronAPI.openTracksmith()`);
+        assert.deepEqual(externalLinks,['https://github.com/tefaz/Tracksmith-mp3-enricher','https://github.com/tefaz/Tracksmith-mp3-enricher']);
+      }finally{shell.openExternal=originalOpenExternal}
       await execute(`document.querySelector('#karaoke-toggle').click();audio.currentTime=0;audio.play()`);
       assert.equal(await execute(`document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='false'&&document.querySelector('#karaoke-toggle').textContent==='Karaoke: Off'&&document.querySelector('#karaoke-lyrics').hidden&&document.querySelector('#karaoke-status').hidden&&document.querySelector('#karaoke-mode').hidden&&document.querySelector('#karaoke-highlight').hidden`),true);
       await execute(`musicVisualizer.time=2;musicVisualizer.travel=0.43;for(let frame=0;frame<8;frame++)musicVisualizer.draw();document.querySelector('.toast')?.classList.remove('show');void 0`);
@@ -382,7 +422,11 @@ app.on('browser-window-created', (_event, window) => {
             const atBottom=content.scrollTop;
             render();checks.push({view,phase:'rerender',samePosition:content.scrollTop===atBottom});
             await change(()=>nextTrack(true));
-            checks.push({view,phase:'previous',current:state.currentId,expected:'scroll-0',visible:visible(),movedUp:content.scrollTop<atBottom});
+            checks.push({view,phase:'previous',current:state.currentId,expected:'scroll-0',unchanged:content.scrollTop===atBottom});
+            await nextTrack();
+            checks.push({view,phase:'manual next',current:state.currentId,expected:nextId,unchanged:content.scrollTop===atBottom});
+            await playTrack('scroll-79');
+            checks.push({view,phase:'manual selection',current:state.currentId,expected:'scroll-79',unchanged:content.scrollTop===atBottom});
           }
           // A queue can continue while browsing a playlist or filter without its song.
           state.selected='other-playlist';render();content.scrollTo({top:400,behavior:'instant'});const before=content.scrollTop;
@@ -397,7 +441,7 @@ app.on('browser-window-created', (_event, window) => {
       })()`);
       for(const check of playbackScrollChecks){
         if(check.phase==='shuffle ended'){assert.equal(check.current,check.expected);assert(check.visible&&check.scroll>0,JSON.stringify(check))}
-        else if(check.phase==='previous'){assert.equal(check.current,check.expected);assert(check.visible&&check.movedUp,JSON.stringify(check))}
+        else if(['previous','manual next','manual selection'].includes(check.phase)){assert.equal(check.current,check.expected);assert(check.unchanged,JSON.stringify(check))}
         else if(check.phase==='centered')assert(check.offset<1,JSON.stringify(check));
         else if(check.phase==='rerender')assert(check.samePosition,JSON.stringify(check));
         else if(check.phase==='other playlist'){assert.equal(check.selected,'other-playlist');assert(check.unchanged)}
@@ -406,6 +450,43 @@ app.on('browser-window-created', (_event, window) => {
       }
       await execute(`playTrack('test-track').then(()=>audio.pause())`);
       assert.equal(await execute(`state.currentId`), 'test-track');
+      const keyboardPlayback=await execute(`(async()=>{
+        const savedSelection=state.selectedTrackIds,savedAnchor=state.selectionAnchor;
+        state.tracks.push({...state.tracks.find(track=>track.id==='test-track'),id:'keyboard-track'});audio.loop=true;
+        state.selectedTrackIds=new Set(['keyboard-track']);state.selectionAnchor='keyboard-track';render();
+        const key=(key,target=document.querySelector('#next'),options={})=>{const event=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event.defaultPrevented};
+        const start=()=>new Promise(resolve=>{const originalRender=render;render=()=>{originalRender();render=originalRender;resolve()};key('Enter')});
+        try{
+          await start();const selectedStarted=state.currentId==='keyboard-track'&&!audio.paused;
+          audio.currentTime=.6;await start();const restarted=audio.currentTime<.2&&!audio.paused;
+          const spaceHandled=key(' '),paused=audio.paused;
+          key(' ',undefined,{repeat:true});const repeatIgnored=audio.paused;
+          const resumed=new Promise(resolve=>audio.addEventListener('playing',resolve,{once:true}));key(' ');await resumed;
+          const resumedPlayback=!audio.paused;
+          setAppView('visualizer');key(' ');const visualizerPaused=audio.paused;setAppView('library');
+          const search=document.querySelector('#search'),searchIgnored=!key(' ',search)&&!key('Enter',search)&&audio.paused;
+          const pending=askText('Keyboard test');const input=document.querySelector('dialog input');const dialogIgnored=!key(' ',input)&&!key('Enter',input);document.querySelector('[data-cancel]').click();await pending;
+          const before=playbackRequest;state.selectedTrackIds=new Set();key('Enter');const noSelectionIgnored=playbackRequest===before;
+          return {selectedStarted,restarted,spaceHandled,paused,repeatIgnored,resumedPlayback,visualizerPaused,searchIgnored,dialogIgnored,noSelectionIgnored};
+        }finally{audio.pause();audio.loop=false;state.tracks=state.tracks.filter(track=>track.id!=='keyboard-track');state.selectedTrackIds=savedSelection;state.selectionAnchor=savedAnchor;await playTrack('test-track');audio.pause()}
+      })()`);
+      for(const [behavior,passed] of Object.entries(keyboardPlayback))assert(passed,behavior);
+      const keyboardSelection=await execute(`(()=>{
+        const saved={tracks:state.tracks,selected:state.selected,query:state.query,sort:state.sort,ids:state.selectedTrackIds,anchor:state.selectionAnchor};
+        const key=(key,target=document.body,options={})=>{const event=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event.defaultPrevented};
+        const selected=()=>[...state.selectedTrackIds][0];
+        try{
+          state.tracks=Array.from({length:50},(_,index)=>({id:'arrow-'+index,title:'Song '+String(index).padStart(2,'0'),artist:'Artist',album:'Album',duration:1}));state.selected='all';state.query='';state.sort={key:'title',direction:'desc'};state.selectedTrackIds=new Set();state.selectionAnchor=null;render();
+          const before=playbackRequest;key('ArrowDown');const first=selected()==='arrow-49';key('ArrowDown');const down=selected()==='arrow-48';key('ArrowUp');key('ArrowUp');const topBoundary=selected()==='arrow-49';
+          state.selectedTrackIds=new Set(['arrow-1']);state.selectionAnchor='arrow-1';key('ArrowDown',undefined,{repeat:true});key('ArrowDown');const bottomBoundary=selected()==='arrow-0';
+          const row=document.querySelector('.selected-track').getBoundingClientRect(),content=document.querySelector('.main-content').getBoundingClientRect(),visible=row.top>=content.top&&row.bottom<=content.bottom;
+          const inputIgnored=!key('ArrowUp',document.querySelector('#search'))&&selected()==='arrow-0';
+          state.query='Song 4';render();key('ArrowDown');key('ArrowDown');const filtered=selected()==='arrow-48';
+          state.query='no matches';render();const emptyIgnored=key('ArrowDown')&&selected()==='arrow-48';
+          return {first,down,topBoundary,bottomBoundary,visible,inputIgnored,filtered,emptyIgnored,noPlayback:playbackRequest===before};
+        }finally{Object.assign(state,{tracks:saved.tracks,selected:saved.selected,query:saved.query,sort:saved.sort,selectedTrackIds:saved.ids,selectionAnchor:saved.anchor});render();document.querySelector('.main-content').scrollTo({top:0,behavior:'instant'})}
+      })()`);
+      for(const [behavior,passed] of Object.entries(keyboardSelection))assert(passed,behavior);
       // Drive the actual handler with explicit timestamps so desktop click settings cannot affect the test.
       assert.equal(await execute(`(()=>{let plays=0,edits=0;const originalPlay=playTrack,originalEdit=editMetadata;playTrack=()=>plays++;editMetadata=()=>edits++;const target=document.querySelector('.track-title');const click=timeStamp=>document.querySelector('#track-list').onclick({target,timeStamp,shiftKey:false,ctrlKey:false,metaKey:false});trackClicks.reset();click(100);click(300);click(1200);click(1800);playTrack=originalPlay;editMetadata=originalEdit;return plays===1&&edits===1})()`), true);
       // Right-click anywhere on a song row reuses the three-dot menu.
@@ -430,7 +511,36 @@ app.on('browser-window-created', (_event, window) => {
       for(const result of rowMenus.results){assert(result.prevented&&result.reset);assert.deepEqual(result.menu,rowMenus.expected);assert.equal(result.current,'test-track');assert.equal(result.left,400);assert.equal(result.top,220)}
       assert(rowMenus.fits);
       // Exercise the inline editor against a real temporary MP3 and the actual tag worker.
-      await execute(`state.query='';state.tracks=[{id:'inline-test',key:${JSON.stringify(tagPath)},path:${JSON.stringify(tagPath)},title:'Song "Live"',artist:'Artist',album:'Album',duration:0}];render();window.normalRowHeight=document.querySelector('.track-row').getBoundingClientRect().height;editMetadata('inline-test','title')`);
+      await execute(`state.query='';state.tracks=[{id:'inline-test',key:${JSON.stringify(tagPath)},path:${JSON.stringify(tagPath)},title:'Song "Live"',artist:'Artist',album:'Album',duration:0}];render();window.normalRowHeight=document.querySelector('.track-row').getBoundingClientRect().height`);
+      for(const field of ['title','artist','album']){
+        const menuEdit=await execute(`(async()=>{document.querySelector('.track-row').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:400,clientY:220}));const button=document.querySelector('[data-action="edit-${field}"]'),label=button.textContent;button.click();await Promise.resolve();const input=document.querySelector('.metadata-input');return {label,field:metadataEdit.field,track:metadataEdit.trackId,value:input.value,expected:state.tracks[0]['${field}'],focused:document.activeElement===input,selected:input.selectionStart===0&&input.selectionEnd===input.value.length,menuClosed:!document.querySelector('.song-popover')}})()`);
+        assert.equal(menuEdit.label,`Edit ${field}`);assert.equal(menuEdit.field,field);assert.equal(menuEdit.track,'inline-test');assert.equal(menuEdit.value,menuEdit.expected);
+        assert(menuEdit.focused&&menuEdit.selected&&menuEdit.menuClosed);
+        await execute(`cancelMetadataEdit()`);
+      }
+      const playlistPicker=await execute(`(async()=>{
+        const savedPlaylists=state.playlists,savedSelected=state.selected;
+        const names=['Chill "mix" <favorites>','Same name','Same name'];
+        state.playlists=names.map((name,index)=>({id:'picker-'+index,name,trackKeys:[],order:index}));state.selected='all';render();
+        try{
+          document.querySelector('.track-row').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+          document.querySelector('[data-action="playlist"]').click();await Promise.resolve();
+          const dialog=document.querySelector('.playlist-picker'),buttons=[...dialog.querySelectorAll('[data-playlist-choice]')];
+          const labels=buttons.map(button=>button.textContent),noInput=!dialog.querySelector('input');
+          buttons[2].click();
+          await new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(state.playlists[2].trackKeys.length){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Playlist choice did not save'))}},10)});
+          const memberships=state.playlists.map(playlist=>playlist.trackKeys.includes(state.tracks[0].key));
+          const stored=(await all('playlists')).find(playlist=>playlist.id==='picker-2');
+          const duplicate=addToPlaylist('inline-test');document.querySelector('[data-playlist-choice="picker-2"]').click();await duplicate;
+          const count=state.playlists[2].trackKeys.length;
+          const cancelled=addToPlaylist('inline-test');document.querySelector('.playlist-picker [data-cancel]').click();await cancelled;
+          return {labels,noInput,memberships,stored:stored.trackKeys.includes(state.tracks[0].key),count,closed:!document.querySelector('.playlist-picker'),unchanged:state.playlists[0].trackKeys.length===0};
+        }finally{state.playlists=savedPlaylists;state.selected=savedSelected;await writeBatch(db,'playlists',[],['picker-0','picker-1','picker-2']);render()}
+      })()`);
+      assert.deepEqual(playlistPicker.labels,['Chill "mix" <favorites>','Same name','Same name']);
+      assert.deepEqual(playlistPicker.memberships,[false,false,true]);assert.equal(playlistPicker.count,1);
+      assert(playlistPicker.noInput&&playlistPicker.stored&&playlistPicker.closed&&playlistPicker.unchanged);
+      await execute(`editMetadata('inline-test','title')`);
       assert.equal(await execute(`document.querySelector('.metadata-input').value`), 'Song "Live"');
       assert.equal(await execute(`document.querySelector('.track-row').getBoundingClientRect().height`),await execute(`normalRowHeight`));
       assert.equal(await execute(`Boolean(document.querySelector('.metadata-edit-status,.metadata-save,.metadata-cancel'))`),false);
@@ -491,6 +601,11 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await execute(`!state.repeat&&localStorage.getItem('nightwave-repeat')==='false'`),true);
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
       assert.equal(await execute(`!state.shuffle&&!state.repeat&&['shuffle','repeat'].every(mode=>{const button=document.getElementById(mode);return !button.classList.contains('active')&&button.getAttribute('aria-pressed')==='false'})`),true);
+      // Saved mode and highlighting preferences survive a reload and the shortcut.
+      await execute(`localStorage.setItem('nightwave-karaoke-mode','current');localStorage.setItem('nightwave-karaoke-highlight','false')`);
+      await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
+      await execute(`setAppView('library');document.querySelector('#open-karaoke').click()`);
+      assert.equal(await execute(`document.querySelector('#visualizer-name').textContent==='Midnight'&&localStorage.getItem('nightwave-visualizer')==='midnight'&&document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='true'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Current line'&&document.querySelector('#karaoke-highlight').getAttribute('aria-pressed')==='false'&&!document.querySelector('#karaoke-highlight').hidden&&localStorage.getItem('nightwave-karaoke-mode')==='current'&&localStorage.getItem('nightwave-karaoke-highlight')==='false'`),true);
       assert.deepEqual(fatalErrors, []);
       finish();
     } catch (error) { finish(error); }
