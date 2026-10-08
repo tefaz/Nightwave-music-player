@@ -87,13 +87,14 @@
       <footer class="player">
         <div class="now-playing"><button id="artwork" class="artwork" type="button" aria-label="View album cover" title="View album cover" disabled>♫</button><div class="song-text"><strong id="now-title">Nothing playing</strong><span id="now-artist">Choose a track from your library</span></div></div>
         <div class="controls"><div class="transport"><button id="shuffle" class="control small" aria-label="Shuffle">⤨</button><button id="previous" class="control" aria-label="Previous">◀◀</button><button id="play" class="play-button" aria-label="Play">▶</button><button id="next" class="control" aria-label="Next">▶▶</button><button id="repeat" class="control small" aria-label="Repeat">↻</button></div><div class="timeline"><span id="current-time">0:00</span><input id="progress" type="range" min="0" max="100" step="any" value="0" aria-label="Song progress" /><span id="duration">0:00</span></div></div>
-        <div class="volume"><svg class="volume-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></svg><input id="volume" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Volume" /></div>
+        <div class="volume"><button id="cast-button" class="control small" type="button" aria-label="Cast music" title="Cast music" aria-pressed="false"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 9V4h18v16H10M3 20h.01M3 16a4 4 0 0 1 4 4M3 12a8 8 0 0 1 8 8"/></svg></button><svg class="volume-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 5 6 9H3v6h3l5 4V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></svg><input id="volume" type="range" min="0" max="1" value="0.8" step="0.01" aria-label="Volume" /></div>
       </footer>
     </div>
     <audio id="audio"></audio>
     <script src="renderer-core.js"></script>
     <script src="karaoke-core.js"></script>
     <script src="app.js"></script>
+    <script src="cast-ui.js"></script>
     <script src="karaoke.js"></script>
     <script src="visualizer.js"></script>
   </body>

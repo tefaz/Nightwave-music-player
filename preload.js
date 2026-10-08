@@ -7,6 +7,15 @@ function scan(channel, args, onProgress) {
   return ipcRenderer.invoke(channel, ...args, requestId).finally(() => ipcRenderer.removeListener('music:scan-progress', listener));
 }
 contextBridge.exposeInMainWorld('electronAPI', {
+  castFirewallInfo: id => ipcRenderer.invoke('cast:firewall-info', id),
+  castFirewallApply: request => ipcRenderer.invoke('cast:firewall-apply', request),
+  castDiscover: () => ipcRenderer.invoke('cast:discover'),
+  castConnect: id => ipcRenderer.invoke('cast:connect', id),
+  castDisconnect: () => ipcRenderer.invoke('cast:disconnect'),
+  castLoad: track => ipcRenderer.invoke('cast:load', track),
+  castCommand: (command, value) => ipcRenderer.invoke('cast:command', command, value),
+  onCastDevices: callback => { const listener = (_event, devices) => callback(devices); ipcRenderer.on('cast:devices', listener); return () => ipcRenderer.removeListener('cast:devices', listener); },
+  onCastStatus: callback => { const listener = (_event, status) => callback(status); ipcRenderer.on('cast:status', listener); return () => ipcRenderer.removeListener('cast:status', listener); },
   pickMusicFolder: onProgress => scan('music:pick-folder', [], onProgress),
   refreshMusicFolders: (directories, onProgress) => scan('music:refresh-folders', [directories], onProgress),
   readTrack: filePath => ipcRenderer.invoke('music:read-track', filePath),

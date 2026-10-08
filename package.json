@@ -1,6 +1,6 @@
 {
   "name": "nightwave-music-player",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "A desktop music player for local collections",
   "author": "Mads Nørgaard <madds.noergaard@gmail.com>",
   "desktopName": "nightwave-music-player",
@@ -9,6 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node tests/regressions.test.js",
+    "test:cast": "node tests/casting.test.js && node tests/cast-firewall.test.js && node tests/cast-video.test.js",
     "test:electron": "electron --no-sandbox --ozone-platform=headless --disable-gpu tests/electron-smoke.cjs",
     "dist:linux": "electron-builder --linux AppImage deb"
   },
@@ -27,11 +28,16 @@
   },
   "private": true,
   "dependencies": {
+    "bonjour-service": "^1.4.4",
+    "castv2-client": "^1.2.0",
     "music-metadata": "^11.15.0",
     "node-id3": "^0.2.9"
   },
   "devDependencies": {
     "electron": "^44.4.3",
     "electron-builder": "^26.0.12"
+  },
+  "overrides": {
+    "protobufjs": "^8.8.0"
   }
 }

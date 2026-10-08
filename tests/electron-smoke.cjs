@@ -39,14 +39,14 @@ net.fetch=(url,options)=>{
 };
 const fatalErrors = [];
 let finished = false;
-let primary;
-const timeout = setTimeout(() => finish(new Error('Desktop checks timed out.')), 25000);
+let primary, testStage = 'startup';
+const timeout = setTimeout(() => finish(new Error(`Desktop checks timed out during: ${testStage}`)), 25000);
 
 function finish(error) {
   if (finished) return;finished = true;clearTimeout(timeout);
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
   if (error) { console.error(error); if(fatalErrors.length)console.error('Renderer errors:',fatalErrors); }
-  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, five main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, karaoke timing and controls, progress alignment, click timing, IndexedDB rollback).');
+  else console.log('PASS: isolated Electron checks (CSP, quotes, IPC, header menus, row dragging, native file drops, playlist drops and reordering, inline editing, tag writes, scanning, playback, live spectrum, five main visualizers, saved view and visualizer selection, equalizer visibility, embedded artwork, karaoke timing and controls, Cast picker and playback controls, progress alignment, click timing, IndexedDB rollback).');
   // Only remove this runner's validated mkdtemp directory.
   fs.rmSync(temporary, { recursive: true, force: true });
   app.exit(error ? 1 : 0);
@@ -60,7 +60,7 @@ app.on('browser-window-created', (_event, window) => {
   });
   window.webContents.once('did-finish-load', async () => {
     try {
-      const execute = code => window.webContents.executeJavaScript(code);
+      const execute = code => { testStage = code.slice(0, 180); return window.webContents.executeJavaScript(code); };
       // Wait until the actual app has finished opening its database.
       await execute(`new Promise((resolve,reject)=>{let attempts=0;const timer=setInterval(()=>{if(db){clearInterval(timer);resolve()}else if(++attempts>100){clearInterval(timer);reject(Error('Database unavailable'))}},20)})`);
       assert.equal(await execute(`Boolean(window.electronAPI && NightwaveCore)`), true);
@@ -428,12 +428,22 @@ app.on('browser-window-created', (_event, window) => {
             checks.push({view,phase:'centered',offset:Math.abs((rowBounds.top+rowBounds.bottom)/2-(viewBounds.top+content.clientTop+content.clientHeight/2))});
             const atBottom=content.scrollTop;
             render();checks.push({view,phase:'rerender',samePosition:content.scrollTop===atBottom});
-            await change(()=>nextTrack(true));
-            checks.push({view,phase:'previous',current:state.currentId,expected:'scroll-0',unchanged:content.scrollTop===atBottom});
-            await nextTrack();
-            checks.push({view,phase:'manual next',current:state.currentId,expected:nextId,unchanged:content.scrollTop===atBottom});
+            await change(()=>document.querySelector('#previous').click());
+            checks.push({view,phase:'previous',current:state.currentId,expected:'scroll-0',visible:visible()});
+            await change(()=>document.querySelector('#next').click());
+            checks.push({view,phase:'manual next',current:state.currentId,expected:nextId,visible:visible()});
             await playTrack('scroll-79');
             checks.push({view,phase:'manual selection',current:state.currentId,expected:'scroll-79',unchanged:content.scrollTop===atBottom});
+          }
+          state.shuffle=false;
+          for(const view of ['all','scroll-playlist']){
+            state.selected=view;render();await playTrack('scroll-20');content.scrollTo({top:800,behavior:'instant'});
+            const before=content.scrollTop,height=document.querySelector('.track-row.playing').getBoundingClientRect().height;
+            await change(()=>document.querySelector('#next').click());
+            checks.push({view,phase:'sequential next',current:state.currentId,expected:'scroll-21',delta:content.scrollTop-before,height});
+            const afterNext=content.scrollTop;
+            await change(()=>document.querySelector('#previous').click());
+            checks.push({view,phase:'sequential previous',current:state.currentId,expected:'scroll-20',delta:content.scrollTop-afterNext,height:-height});
           }
           // A queue can continue while browsing a playlist or filter without its song.
           state.selected='other-playlist';render();content.scrollTo({top:400,behavior:'instant'});const before=content.scrollTop;
@@ -448,7 +458,9 @@ app.on('browser-window-created', (_event, window) => {
       })()`);
       for(const check of playbackScrollChecks){
         if(check.phase==='shuffle ended'){assert.equal(check.current,check.expected);assert(check.visible&&check.scroll>0,JSON.stringify(check))}
-        else if(['previous','manual next','manual selection'].includes(check.phase)){assert.equal(check.current,check.expected);assert(check.unchanged,JSON.stringify(check))}
+        else if(['previous','manual next'].includes(check.phase)){assert.equal(check.current,check.expected);assert(check.visible,JSON.stringify(check))}
+        else if(check.phase==='manual selection'){assert.equal(check.current,check.expected);assert(check.unchanged,JSON.stringify(check))}
+        else if(['sequential next','sequential previous'].includes(check.phase)){assert.equal(check.current,check.expected);assert(Math.abs(check.delta-check.height)<1,JSON.stringify(check))}
         else if(check.phase==='centered')assert(check.offset<1,JSON.stringify(check));
         else if(check.phase==='rerender')assert(check.samePosition,JSON.stringify(check));
         else if(check.phase==='other playlist'){assert.equal(check.selected,'other-playlist');assert(check.unchanged)}
@@ -613,9 +625,96 @@ app.on('browser-window-created', (_event, window) => {
       await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.webContents.reload()});
       await execute(`setAppView('library');document.querySelector('#open-karaoke').click()`);
       assert.equal(await execute(`document.querySelector('#visualizer-name').textContent==='Karaoke lounge'&&localStorage.getItem('nightwave-visualizer')==='karaoke'&&document.querySelector('#karaoke-toggle').getAttribute('aria-pressed')==='true'&&document.querySelector('#karaoke-mode').textContent==='Karaoke Mode: Current line'&&document.querySelector('#karaoke-highlight').getAttribute('aria-pressed')==='false'&&!document.querySelector('#karaoke-highlight').hidden&&localStorage.getItem('nightwave-karaoke-mode')==='current'&&localStorage.getItem('nightwave-karaoke-highlight')==='false'`),true);
+      await execute(`(async()=>{setAppView('library');state.repeat=false;state.shuffle=false;audio.loop=false;state.tracks=['cast-one','cast-two'].map(id=>({id,key:id,path:${JSON.stringify(audioPath)},title:id,artist:'Test artist',album:'Test album',duration:1}));state.selected='all';state.query='';render();await playTrack('cast-one');audio.pause();audio.currentTime=.3;document.querySelector('#cast-button').click()})()`);
+      await execute(`new Promise(resolve=>{const timer=setInterval(()=>{if(document.querySelector('.cast-devices button')){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`document.querySelector('.cast-devices button').textContent`),'Living room TV');
+      await execute(`document.querySelector('.cast-devices button').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castBusy&&castState.connected){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`castState.connected&&audio.paused&&castState.paused&&document.querySelector('#cast-button').getAttribute('aria-pressed')==='true'&&!document.querySelector('.cast-picker[open]')`),true);
+      assert.equal(castTest.loads.at(-1).id,'cast-one');assert.equal(castTest.loads.at(-1).paused,true);assert(Math.abs(castTest.loads.at(-1).currentTime-.3)<.01);
+      assert.equal(await execute(`Number(document.querySelector('#volume').value)`),.4);
+      await execute(`togglePlayback()`); assert.equal(castTest.commands.at(-1)[0],'play');
+      await execute(`togglePlayback()`); assert.equal(castTest.commands.at(-1)[0],'pause');
+      await execute(`document.querySelector('#volume').value=.2;document.querySelector('#volume').dispatchEvent(new Event('input'));document.querySelector('#progress').value=50;document.querySelector('#progress').dispatchEvent(new Event('input'));void 0`);
+      await new Promise(resolve=>setTimeout(resolve,30));
+      assert(castTest.commands.some(([command,value])=>command==='volume'&&value===.2));
+      assert(castTest.commands.some(([command,value])=>command==='seek'&&value===.5));
+      await execute(`nextTrack()`);assert.equal(castTest.loads.at(-1).id,'cast-two');
+      castTest.emit('status',{connected:true,trackId:'cast-two',currentTime:1,duration:1,playerState:'IDLE',idleReason:'FINISHED'});
+      await new Promise(resolve=>setTimeout(resolve,50));assert.equal(castTest.loads.at(-1).id,'cast-one');
+      await execute(`document.querySelector('#cast-button').click()`);
+      await execute(`document.querySelector('.cast-disconnect').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castBusy&&!castState.connected){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`!castState.connected&&audio.paused&&document.querySelector('#cast-button').getAttribute('aria-pressed')==='false'`),true);
+      castTest.failLoad=true;
+      await execute(`document.querySelector('#cast-button').click()`);
+      await execute(`new Promise(resolve=>{const timer=setInterval(()=>{if(document.querySelector('.cast-devices button')){clearInterval(timer);resolve()}},10)})`);
+      await execute(`document.querySelector('.cast-devices button').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castBusy&&!document.querySelector('.cast-firewall').hidden){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`document.querySelector('.cast-firewall-summary').textContent.includes('Living room TV (192.168.1.9)')&&document.querySelector('.cast-firewall-command').value.includes('port 40789')&&!document.querySelector('.cast-firewall-apply').hidden`),true);
+      assert.equal(firewallApplications.length,0);
+      await execute(`document.querySelector('.cast-firewall-apply').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castBusy){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`document.querySelector('.cast-firewall-status').textContent.includes('cancelled or denied')`),true);
+      await execute(`document.querySelector('.cast-firewall-apply').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castBusy){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(firewallApplications.length,2);
+      assert.equal(await execute(`document.querySelector('.cast-firewall-status').textContent`),'Firewall rule added. Try casting again.');
+      castTest.failLoad=false;
+      await execute(`document.querySelector('.cast-firewall-retry').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castBusy&&castState.connected){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`castState.connected&&!document.querySelector('.cast-picker[open]')`),true);
+      await new Promise(resolve=>setTimeout(resolve,30));
+      castTest.failLoad=true;
+      await execute(`playTrack('cast-two',true)`);
+      await execute(`new Promise(resolve=>{const timer=setInterval(()=>{if(document.querySelector('.cast-firewall')&&!document.querySelector('.cast-firewall').hidden){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(await execute(`document.querySelector('.cast-firewall-status').textContent.includes('could not reach the music stream')`),true);
+      castTest.failLoad=false;
+      await execute(`document.querySelector('.cast-firewall-retry').click();new Promise(resolve=>{const timer=setInterval(()=>{if(!castLoading&&state.currentId==='cast-two'){clearInterval(timer);resolve()}},10)})`);
+      assert.equal(castTest.loads.at(-1).id,'cast-two');
+      await execute(`document.querySelector('#cast-button').click()`);
+      assert.equal(await execute(`document.querySelector('.cast-karaoke-mode').value`),'music');
+      assert.equal(await execute(`document.querySelector('.cast-karaoke-mode').options.length`),4);
+      assert.equal(await execute(`Boolean(document.querySelector('.cast-lyrics-enable'))`),false);
+      await execute(`state.tracks.find(track=>track.id==='cast-two').path=${JSON.stringify(karaokePath)};void 0`);
+      const audioPreparationCount = videoPreparations.length;
+      await execute(`playTrack('cast-two',true)`);
+      assert.equal(castTest.loads.at(-1).path,karaokePath);assert.equal(castTest.loads.at(-1).videoLyrics,false);assert.equal(castTest.loads.at(-1).captions,false);
+      assert.equal(videoPreparations.length,audioPreparationCount);
+      await execute(`(()=>{const select=document.querySelector('.cast-karaoke-mode');select.value='single';select.dispatchEvent(new Event('change'))})()`);
+      await execute(`playTrack('cast-two',true)`);assert.equal(castTest.loads.at(-1).videoLyrics,true);assert.match(videoPreparations.at(-1).captionVtt,/First karaoke line/);
+      assert.equal(videoPreparations.at(-1).mode,'single');
+      await execute(`(()=>{const select=document.querySelector('.cast-karaoke-mode');select.value='scroll';select.dispatchEvent(new Event('change'))})()`);
+      await execute(`playTrack('cast-two',true)`);assert.equal(videoPreparations.at(-1).mode,'scroll');
+      await execute(`(()=>{const select=document.querySelector('.cast-karaoke-mode');select.value='words';select.dispatchEvent(new Event('change'))})()`);
+      assert.equal(await execute(`document.querySelector('.cast-karaoke-note').textContent.includes('estimates')`),true);
+      await execute(`new Promise(resolve=>{document.querySelector('.cast-picker[open]').addEventListener('close',resolve,{once:true});document.querySelector('.cast-close').click()})`);
+      await execute(`document.querySelector('#cast-button').click();void 0`);
+      assert.equal(await execute(`document.querySelector('.cast-karaoke-mode').value`),'words');
+      await execute(`playTrack('cast-two',true)`);assert.equal(videoPreparations.at(-1).mode,'words');assert.equal(videoPreparations.at(-1).timedLines[0].text,'First karaoke line');
+      await execute(`(()=>{const select=document.querySelector('.cast-karaoke-mode');select.value='music';select.dispatchEvent(new Event('change'));document.querySelector('.cast-close').click()})()`);
+      await execute(`playTrack('cast-two',true)`);assert.equal(castTest.loads.at(-1).captions,false);assert.equal(castTest.loads.at(-1).path,karaokePath);assert.equal(castTest.loads.at(-1).videoLyrics,false);
+      assert.equal(videoPreparations.length,audioPreparationCount+3);
       assert.deepEqual(fatalErrors, []);
       finish();
     } catch (error) { finish(error); }
   });
 });
+// Simulate a TV through the real IPC bridge; keep desktop tests independent of a home network.
+let castTest, firewallApplications = [];
+const { EventEmitter } = require('node:events');
+require('../casting').Casting = class extends EventEmitter {
+  constructor() { super(); castTest = this; this.loads = []; this.commands = []; this.devices = new Map([['test-tv', { id: 'test-tv', name: 'Living room TV', host: '192.168.1.9' }]]); }
+  discover() { return [{ id: 'test-tv', name: 'Living room TV' }]; }
+  async connect() { this.device = this.devices.get('test-tv'); this.emit('status', { connected: true, deviceName: 'Living room TV' }); return { name: 'Living room TV', volume: 0.4 }; }
+  async load(track) { this.loads.push(track); this.track = track; if (this.failLoad) { this.lastLoadFailure = { kind: 'stream-unreachable', host: '192.168.1.9' }; throw Error('The TV could not reach the audio stream.'); } }
+  async command(command, value) { this.commands.push([command, value]); }
+  async disconnect() { this.emit('status', { connected: false }); }
+  close() {}
+};
+// Validate the complete UI/IPC flow without changing the host firewall or opening authentication dialogs.
+require('../cast-firewall').createCastFirewall = () => ({
+  async info(device, port) { return { deviceId: device.id, deviceName: device.name, host: device.host, port, canApply: true, command: `sudo ufw allow from ${device.host} to any port ${port} proto tcp comment 'Nightwave Cast audio'`, guidance: 'Allow only this TV. Administrator authentication is required.' }; },
+  async apply(device, port, request) { assert.equal(request.host, device.host); assert.equal(request.port, port); firewallApplications.push(request); if (firewallApplications.length === 1) throw Error('Administrator authentication was cancelled or denied.'); return { ok: true, message: 'Firewall rule added. Try casting again.' }; }
+});
+const videoPreparations = [];
+require('../cast-video').CastVideo = class {
+  cancel() {}
+  close() {}
+  async render(input) { videoPreparations.push(input);input.onProgress?.(0);return '/tmp/video-test.mp4'; }
+};
 require('../main');

@@ -246,3 +246,34 @@ body { background:#0d0d0f; }.topbar,.sidebar,.player { background:#151517; }.mai
   .row-menu { display:block; }
   .track-header span.timed-lyrics-heading { display:flex; }
 }
+
+.cast-picker{width:min(440px,90vw);padding:24px;color:#eee;background:#181820;border:1px solid #45404b;border-radius:16px;box-shadow:0 20px 80px #0009}
+.cast-picker::backdrop{background:#0009}
+.cast-picker h2{margin:0 0 12px;font-size:22px}
+.cast-picker p{color:#bdb7c5;font-size:14px;line-height:1.5}
+.cast-devices{display:grid;gap:8px;margin:18px 0;max-height:40vh;overflow:auto}
+.cast-picker button{padding:10px 14px;border:1px solid #4d4454;border-radius:8px;background:#292330;color:#eee;cursor:pointer;font:inherit}
+.cast-picker button:hover{background:#42334a}
+.cast-picker button:disabled{opacity:.5;cursor:wait}
+.cast-devices button{text-align:left}
+.cast-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+#cast-button.active{color:#e293db}
+#cast-button{flex-shrink:0}
+.volume{gap:12px}
+@media(min-width:761px) and (max-width:1150px){
+  .player{grid-template-columns:minmax(150px,200px) auto minmax(180px,1fr) auto;gap:16px}
+  .timeline{grid-template-columns:35px minmax(80px,1fr) 35px;gap:8px}
+  .transport{gap:12px}
+  .volume input{width:70px}
+}
+.cast-picker{max-height:85vh;overflow:auto}
+.cast-firewall{border-top:1px solid #45404b;margin:18px 0;padding:16px 0}
+.cast-firewall h3{margin:0;font-size:16px}
+.cast-firewall-command{box-sizing:border-box;width:100%;resize:none;border:1px solid #4d4454;border-radius:8px;padding:10px;background:#111116;color:#eee;font:12px monospace;line-height:1.5}
+.cast-firewall-status{min-height:1.5em}
+.cast-firewall-apply{border-color:#a777bf!important}
+.cast-picker .cast-lyrics-note{font-size:12px;margin:8px 0;color:#aaa4b2}
+.cast-karaoke-option{display:flex;gap:10px;align-items:center;margin-top:12px;font-size:14px}
+.cast-karaoke-mode{flex:1;min-width:0;background:#211e28;color:#eee;border:1px solid #51465c;border-radius:6px;padding:8px}
+.cast-karaoke-mode:disabled{opacity:.5}
+.cast-picker .cast-karaoke-note{font-size:12px;margin:8px 0;color:#c5bdcd}

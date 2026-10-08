@@ -97,7 +97,7 @@
       progress, fade
     };
   }
-  const api = { timedLyrics, currentLine, lineIndex, wordSegments, scrollingFrame };
+  const api = { timedLyrics, currentLine, lineIndex, lineEnd, wordSegments, scrollingFrame };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NightwaveKaraokeCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -472,7 +472,7 @@ test('blob playback releases URLs on replacement, failure, and unload', async ()
   const created = [], revoked = [];
   const state = { tracks: [{ id: 'a', file: {} }, { id: 'b', file: {} }], objectUrl: null, shuffle: false };
   const audio = { pause() {}, removeAttribute() {}, load() {}, play: async () => {} };
-  const context = { state, audio, window: {}, playbackRequest: 0, playbackQueue: new PlaybackQueue(),
+  const context = { state, audio, window: {}, playbackRequest: 0, castState: { connected: false }, castBusy: false, castLoading: false, playbackQueue: new PlaybackQueue(),
     visibleTracks: () => state.tracks, URL: { createObjectURL: () => { const url=`blob:${created.length}`;created.push(url);return url; }, revokeObjectURL: url => revoked.push(url) },
     $: selector => selector==='#track-list .track-row.playing'?null:({ style: { setProperty() {} } }), render() {}, toast() {}, updateMediaSession() {}
   };
@@ -484,16 +484,16 @@ test('blob playback releases URLs on replacement, failure, and unload', async ()
   await context.playTrack('a');assert.deepEqual(revoked, created);assert.equal(state.objectUrl, null);
 });
 
-test('only automatic track changes center the playing song', async () => {
+test('navigation moves one row normally and centers shuffled or automatic playback', async () => {
   const source = await fs.readFile(path.join(__dirname, '../app.js'), 'utf8');
-  const centered = [];
+  const centered = [], scrolled = [];
   const state = { tracks: ['a', 'b', 'c'].map(id => ({ id, file: {} })), objectUrl: null, shuffle: false, repeat: false };
   const audio = { pause() {}, removeAttribute() {}, load() {}, play: async () => {} };
-  const context = { state, audio, window: {}, playbackRequest: 0, playbackQueue: new PlaybackQueue(),
+  const context = { state, audio, window: {}, playbackRequest: 0, castState: { connected: false }, castBusy: false, castLoading: false, playbackQueue: new PlaybackQueue(),
     visibleTracks: () => state.tracks, URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
     $: selector => selector === '#track-list .track-row.playing'
-      ? { scrollIntoView: options => centered.push({ id: state.currentId, block: options.block }) }
-      : { style: { setProperty() {} } },
+      ? { scrollIntoView: options => centered.push({ id: state.currentId, block: options.block }), getBoundingClientRect: () => ({ height: 66 }) }
+      : { style: { setProperty() {} }, scrollBy: options => scrolled.push(options.top) },
     render() {}, toast() {}, updateMediaSession() {}
   };
   vm.createContext(context);
@@ -505,6 +505,7 @@ test('only automatic track changes center the playing song', async () => {
   await context.nextTrack(true);
   assert.equal(state.currentId, 'a');
   assert.deepEqual(centered, []);
+  assert.deepEqual(scrolled, [66,-66]);
   await audio.onended();
   assert.equal(state.currentId, 'b');
   assert.deepEqual(centered, [{ id: 'b', block: 'center' }]);
@@ -516,6 +517,12 @@ test('only automatic track changes center the playing song', async () => {
   context.playbackQueue.clear();
   await audio.onended();
   assert.deepEqual(centered, [{ id: 'b', block: 'center' }, { id: 'a', block: 'center' }]);
+  state.shuffle = true;
+  await context.nextTrack();
+  await context.nextTrack(true);
+  assert.equal(centered.length, 4);
+  assert.equal(centered.at(-1).id, 'a');
+  assert.deepEqual(scrolled, [66,-66]);
 });
 
 test('stale asynchronous playback requests cannot replace a newer song', async () => {
@@ -523,7 +530,7 @@ test('stale asynchronous playback requests cannot replace a newer song', async (
   let resolveFirst;
   const state = { tracks: [{ id: 'a', path: '/a.mp3' }, { id: 'b', path: '/b.mp3' }], objectUrl: null, shuffle: false };
   const audio = { pause() {}, removeAttribute() {}, load() {}, play: async () => {} };
-  const context = { state, audio, window: { electronAPI: { fileUrl: file => file === '/a.mp3' ? new Promise(resolve => { resolveFirst=resolve; }) : Promise.resolve('file:///b.mp3') } }, playbackRequest: 0, playbackQueue: new PlaybackQueue(),
+  const context = { state, audio, window: { electronAPI: { fileUrl: file => file === '/a.mp3' ? new Promise(resolve => { resolveFirst=resolve; }) : Promise.resolve('file:///b.mp3') } }, playbackRequest: 0, castState: { connected: false }, castBusy: false, castLoading: false, playbackQueue: new PlaybackQueue(),
     visibleTracks: () => state.tracks, URL: { revokeObjectURL() {} }, $: selector => selector==='#track-list .track-row.playing'?null:({ style: { setProperty() {} } }), render() {}, toast() {}, updateMediaSession() {}
   };
   vm.createContext(context);vm.runInContext(source.slice(source.indexOf('function releaseAudio('), source.indexOf('async function newPlaylist(')), context);

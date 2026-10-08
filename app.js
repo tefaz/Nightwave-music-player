@@ -4,6 +4,13 @@ const { transaction, writeBatch, PlaybackQueue, TrackClicks } = NightwaveCore;
 const playbackQueue = new PlaybackQueue();
 const trackClicks = new TrackClicks();
 let playbackRequest = 0, scanning = false;
+let castState = { connected: false, paused: true, currentTime: 0, duration: 0 }, castLoading = false, castEnded = false, castBusy = false;
+const castKaraokeMode = () => {
+  const mode = localStorage.getItem('nightwave-cast-mode');
+  return ['music', 'single', 'scroll', 'words'].includes(mode) ? mode : 'music';
+};
+const castLyricsEnabled = () => castKaraokeMode() !== 'music';
+const playbackPaused = () => castState.connected ? castState.paused : audio.paused;
 let metadataEdit = null, renderingTracks = false;
 const savedLibraryFolders=(()=>{try{const folders=JSON.parse(localStorage.getItem('nightwave-library-folders')||'[]');return Array.isArray(folders)?folders.filter(folder=>typeof folder==='string'&&folder):[]}catch{return []}})();
 let db, state = { tracks: [], playlists: [], selected: 'all', currentId: null, shuffle: localStorage.getItem('nightwave-shuffle')==='true', repeat: localStorage.getItem('nightwave-repeat')==='true', objectUrl: null, query: '', sort: { key: 'artist', direction: 'asc' }, selectedTrackIds: new Set(), selectionAnchor: null, libraryFolders: savedLibraryFolders };
@@ -145,7 +152,7 @@ function updateSongProgress(value) {
   progress.style.setProperty('--progress-fraction', Number(progress.value) / 100);
 }
 function stopPlayback(){
-  playbackRequest++;releaseAudio();state.currentId=null;playbackQueue.clear();
+  playbackRequest++;releaseAudio();if(castState.connected)window.electronAPI.castCommand('stop').catch(error=>toast(error.message));state.currentId=null;playbackQueue.clear();
   $('#now-title').textContent='Nothing playing';$('#now-artist').textContent='Choose a track from your library';$('#play').textContent='▶';
   $('#current-time').textContent=$('#duration').textContent='0:00';updateSongProgress(0);$('#artwork').textContent='♫';$('#artwork').disabled=true;updateMediaSession();
 }
@@ -173,15 +180,27 @@ async function removeSelectedTracks(){
   state.selectedTrackIds=new Set();state.selectionAnchor=null;trackClicks.reset();render();
   toast(playlist?`${count} tracks removed from ${playlist.name}.`:`${count} tracks unloaded. Playlist assignments were kept.`);
 }
-function scrollPlayingTrackIntoView(){
+function scrollPlayingTrackIntoView(direction=0){
   const content=$('.main-content');if(!content||content.hidden)return;
-  $('#track-list .track-row.playing')?.scrollIntoView({behavior:'instant',block:'center',inline:'nearest'});
+  const row=$('#track-list .track-row.playing');if(!row)return;
+  if(direction&&!state.shuffle)content.scrollBy({top:direction*row.getBoundingClientRect().height,behavior:'instant'});
+  else row.scrollIntoView({behavior:'instant',block:'center',inline:'nearest'});
 }
-async function playTrack(trackId,keepQueue=false,autoAdvance=false){
+async function playTrack(trackId,keepQueue=false,autoAdvance=false,navigationDirection=0){
+  if(castBusy){toast('Wait for the Cast connection to finish.');return}
   const track=state.tracks.find(t=>t.id===trackId);if(!track)return;
   if(!keepQueue)playbackQueue.start(visibleTracks().map(item=>item.id),trackId,state.shuffle);
   const request=++playbackRequest;releaseAudio();
   try{
+    if(castState.connected){
+      if(!track.path)throw Error('Casting requires a music file loaded from this computer.');
+      castLoading=true;castEnded=false;
+      await window.electronAPI.castLoad({id:track.id,path:track.path,title:track.title,artist:track.artist,album:track.album,captions:castLyricsEnabled(),karaokeMode:castKaraokeMode()});
+      if(request!==playbackRequest)return;
+      state.currentId=track.id;castState.paused=false;castState.currentTime=0;castState.duration=track.duration||0;
+      $('#now-title').textContent=track.title;$('#now-artist').textContent=track.artist;$('#play').textContent='Ⅱ';
+      window.NightwaveKaraoke?.clear();render();updateMediaSession();if(autoAdvance||navigationDirection)scrollPlayingTrackIntoView(autoAdvance?0:navigationDirection);return;
+    }
     let source,objectUrl=null;
     if(track.path&&window.electronAPI)source=await window.electronAPI.fileUrl(track.path);
     else {if(!track.file)throw Error('File unavailable');objectUrl=URL.createObjectURL(track.file);source=objectUrl}
@@ -191,16 +210,16 @@ async function playTrack(trackId,keepQueue=false,autoAdvance=false){
     audio.src=source;state.currentId=track.id;
     window.NightwaveKaraoke?.refresh(track);
     await audio.play();if(request!==playbackRequest)return;
-    $('#now-title').textContent=track.title;$('#now-artist').textContent=track.artist;$('#play').textContent='Ⅱ';render();if(autoAdvance)scrollPlayingTrackIntoView();
+    $('#now-title').textContent=track.title;$('#now-artist').textContent=track.artist;$('#play').textContent='Ⅱ';render();if(autoAdvance||navigationDirection)scrollPlayingTrackIntoView(autoAdvance?0:navigationDirection);
   }catch(error){
     if(request!==playbackRequest)return;
-    stopPlayback();render();toast('This file could not be played. Check that it is available and supported.');
-  }
+    stopPlayback();render();toast(castState.connected?`Casting failed: ${error.message}`:'This file could not be played. Check that it is available and supported.');
+  }finally{if(request===playbackRequest)castLoading=false;}
 }
 function nextTrack(back=false,autoAdvance=false){
   playbackQueue.prune(new Set(state.tracks.map(track=>track.id)));
   if(!playbackQueue.order.length){const track=visibleTracks()[0];if(track)return playTrack(track.id,false,autoAdvance);return}
-  const trackId=playbackQueue.move(back);if(trackId)return playTrack(trackId,true,autoAdvance);
+  const trackId=playbackQueue.move(back);if(trackId)return playTrack(trackId,true,autoAdvance,!autoAdvance&&trackId!==state.currentId?(back?-1:1):0);
 }
 async function newPlaylist(){ const name=await askText('Name your playlist');if(!name)return; const p={id:id(),name,trackKeys:[],order:state.playlists.length};await put('playlists',p);state.playlists.push(p);state.selected=p.id;render(); }
 async function renamePlaylist(playlistId){const playlist=state.playlists.find(p=>p.id===playlistId);if(!playlist)return;const name=await askText('Rename playlist',playlist.name);if(!name||name===playlist.name)return;await put('playlists',{...playlist,name});playlist.name=name;render();}
@@ -475,7 +494,7 @@ $('.track-header').onclick=e=>{const button=e.target.closest('[data-sort]');if(!
 $('#search').oninput=e=>{state.query=e.target.value;render()};
 $('.nav-item').onclick=()=>{state.selected='all';state.selectedTrackIds=new Set();state.selectionAnchor=null;render()};$('#play-all').onclick=()=>{const t=visibleTracks()[0];if(t)playTrack(t.id)};
 document.addEventListener('keydown',e=>{const target=e.target;if(e.key!=='Delete'||target.matches('input,textarea,[contenteditable]')||document.querySelector('dialog[open]'))return;if(!state.selectedTrackIds.size)return;e.preventDefault();removeSelectedTracks()});
-async function togglePlayback(){if(!state.currentId){const track=visibleTracks()[0];if(track)await playTrack(track.id);return}if(audio.paused){try{await audio.play();$('#play').textContent='Ⅱ'}catch{toast('Playback could not be resumed.')}}else{audio.pause();$('#play').textContent='▶'}}
+async function togglePlayback(){if(castBusy||castLoading)return;if(!state.currentId){const track=visibleTracks()[0];if(track)await playTrack(track.id);return}if(castState.connected){try{const paused=!castState.paused;await window.electronAPI.castCommand(paused?'pause':'play');castState.paused=paused;$('#play').textContent=castState.paused?'▶':'Ⅱ';updateMediaSession()}catch(error){toast(error.message)}return}if(audio.paused){try{await audio.play();$('#play').textContent='Ⅱ'}catch{toast('Playback could not be resumed.')}}else{audio.pause();$('#play').textContent='▶'}}
 document.addEventListener('keydown',event=>{
   if(![' ','Enter','ArrowUp','ArrowDown'].includes(event.key)||event.isComposing||event.ctrlKey||event.metaKey||event.altKey)return;
   if(event.target.closest?.('textarea,select,[contenteditable]:not([contenteditable="false"]),input:not([type="range"])')||document.querySelector('dialog[open]:not(.cover-viewer)'))return;
@@ -497,15 +516,15 @@ document.addEventListener('keydown',event=>{
   const trackId=state.selectedTrackIds.has(state.selectionAnchor)?state.selectionAnchor:visibleTracks().find(track=>state.selectedTrackIds.has(track.id))?.id;
   if(trackId){trackClicks.reset();playTrack(trackId)}
 },true);
-function updateMediaSession(){if(!('mediaSession' in navigator))return;const track=state.tracks.find(item=>item.id===state.currentId);navigator.mediaSession.playbackState=track&&!audio.paused?'playing':track?'paused':'none';if(track&&'MediaMetadata' in window)navigator.mediaSession.metadata=new MediaMetadata({title:track.title,artist:track.artist,album:track.album});else if(!track)navigator.mediaSession.metadata=null}
-function setupMediaSession(){if(!('mediaSession' in navigator))return;const handlers={play:()=>{if(audio.paused)togglePlayback()},pause:()=>{if(!audio.paused)togglePlayback()},previoustrack:()=>nextTrack(true),nexttrack:()=>nextTrack()};for(const [action,handler] of Object.entries(handlers)){try{navigator.mediaSession.setActionHandler(action,handler)}catch{}}}
+function updateMediaSession(){if(!('mediaSession' in navigator))return;const track=state.tracks.find(item=>item.id===state.currentId);navigator.mediaSession.playbackState=track&&!playbackPaused()?'playing':track?'paused':'none';if(track&&'MediaMetadata' in window)navigator.mediaSession.metadata=new MediaMetadata({title:track.title,artist:track.artist,album:track.album});else if(!track)navigator.mediaSession.metadata=null}
+function setupMediaSession(){if(!('mediaSession' in navigator))return;const handlers={play:()=>{if(playbackPaused())togglePlayback()},pause:()=>{if(!playbackPaused())togglePlayback()},previoustrack:()=>nextTrack(true),nexttrack:()=>nextTrack()};for(const [action,handler] of Object.entries(handlers)){try{navigator.mediaSession.setActionHandler(action,handler)}catch{}}}
 $('#play').onclick=togglePlayback;$('#next').onclick=()=>nextTrack();$('#previous').onclick=()=>nextTrack(true);window.electronAPI?.onPlaybackCommand(command=>{if(command==='toggle')togglePlayback();else if(command==='next')nextTrack();else if(command==='previous')nextTrack(true)});setupMediaSession();
 playbackQueue.setShuffle(state.shuffle);
 for(const mode of ['shuffle','repeat']){
   const button=$(`#${mode}`),paint=()=>{button.classList.toggle('active',state[mode]);button.setAttribute('aria-pressed',String(state[mode]))};
   paint();button.onclick=()=>{state[mode]=!state[mode];if(mode==='shuffle')playbackQueue.setShuffle(state.shuffle);localStorage.setItem(`nightwave-${mode}`,String(state[mode]));paint()};
 }
-audio.ontimeupdate=()=>{const value=audio.duration?audio.currentTime/audio.duration*100:0;updateSongProgress(value);$('#current-time').textContent=time(audio.currentTime)};audio.onloadedmetadata=()=>{$('#duration').textContent=time(audio.duration)};audio.onplay=updateMediaSession;audio.onpause=updateMediaSession;audio.onended=()=>state.repeat?(audio.currentTime=0,audio.play()):nextTrack(false,true);$('#progress').oninput=e=>{updateSongProgress(Number(e.target.value));if(Number.isFinite(audio.duration)&&audio.duration>0){audio.currentTime=audio.duration*(e.target.value/100);$('#current-time').textContent=time(audio.currentTime)}};const savedVolumeValue=localStorage.getItem('nightwave-volume'),savedVolume=Number(savedVolumeValue),initialVolume=savedVolumeValue!==null&&Number.isFinite(savedVolume)&&savedVolume>=0&&savedVolume<=1?savedVolume:.8,volumeControl=$('#volume');audio.volume=initialVolume;volumeControl.value=initialVolume;volumeControl.style.setProperty('--value',`${initialVolume*100}%`);volumeControl.oninput=e=>{audio.volume=e.target.value;volumeControl.style.setProperty('--value',`${audio.volume*100}%`);localStorage.setItem('nightwave-volume',audio.volume)};
+audio.ontimeupdate=()=>{if(castState.connected)return;const value=audio.duration?audio.currentTime/audio.duration*100:0;updateSongProgress(value);$('#current-time').textContent=time(audio.currentTime)};audio.onloadedmetadata=()=>{if(castState.connected)return;$('#duration').textContent=time(audio.duration)};audio.onplay=updateMediaSession;audio.onpause=updateMediaSession;audio.onended=()=>castState.connected?undefined:state.repeat?(audio.currentTime=0,audio.play()):nextTrack(false,true);$('#progress').oninput=e=>{updateSongProgress(Number(e.target.value));if(castState.connected){const seconds=castState.duration*Number(e.target.value)/100;window.electronAPI.castCommand('seek',seconds).catch(error=>toast(error.message));return}if(Number.isFinite(audio.duration)&&audio.duration>0){audio.currentTime=audio.duration*(e.target.value/100);$('#current-time').textContent=time(audio.currentTime)}};const savedVolumeValue=localStorage.getItem('nightwave-volume'),savedVolume=Number(savedVolumeValue),initialVolume=savedVolumeValue!==null&&Number.isFinite(savedVolume)&&savedVolume>=0&&savedVolume<=1?savedVolume:.8,volumeControl=$('#volume');audio.volume=initialVolume;volumeControl.value=initialVolume;volumeControl.style.setProperty('--value',`${initialVolume*100}%`);volumeControl.oninput=e=>{if(castState.connected){window.electronAPI.castCommand('volume',Number(e.target.value)).catch(error=>toast(error.message));volumeControl.style.setProperty('--value',`${Number(e.target.value)*100}%`);return}audio.volume=e.target.value;volumeControl.style.setProperty('--value',`${audio.volume*100}%`);localStorage.setItem('nightwave-volume',audio.volume)};
 const looksTemporaryTitle = value => /^(?:video[_ -]?download|download[_ -]?(?:temp|video)?|temp(?:orary)?|unknown|untitled)[_ -]*/i.test(String(value||'').trim());
 async function refreshSavedMetadata(){
   // Read missing artwork and timed-lyrics status once in the background.

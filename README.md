@@ -16,6 +16,8 @@ Nightwave is a local desktop music player built with Electron. It lets you load 
 - Keep playlist memberships when songs are unloaded and loaded again
 - Edit title, artist, and album tags in MP3 files
 - Show a song in the system file manager
+- Cast local music to Chromecast TVs and speakers on your home network
+- Choose music-only casting or three TV karaoke layouts with embedded timed lyrics
 - Shuffle, repeat, seek, and control volume
 - View a live sunset-colored audio spectrum in the sidebar
 - Switch the main panels to Space tunnel, Midnight, Karaoke lounge, Aurora, or Kaleidoscope visualizers while keeping playback controls visible
@@ -62,11 +64,29 @@ Choose **View → Show equalizer** to hide or show the visualizer below the play
 
 Choose **View → Visualizer** to replace the playlist and song panels with music-reactive visuals. The header and playback footer remain visible. The arrow midway down the right edge cycles through **Space tunnel** (shifting colors, star trails, and electric strands), **Aurora** (flowing curtains of light), and **Kaleidoscope** (rotating geometric patterns and glowing orbits). Nightwave remembers your chosen effect. Use **View → Library**, **Back to library**, or Escape to return. Your playlist and filter are retained, and Nightwave remembers the selected view. The visuals slow to an idle animation when music is paused and respect your system's reduced motion setting.
 
-Playback keeps the queue you started, even when you filter, sort, or browse another playlist. Shuffle plays each queued song once per cycle, and Previous retraces that order. When a new song starts, the current library or playlist instantly centers its row in the viewport where space allows. Shuffle and repeat-song settings are remembered between sessions. Folder scans show progress, retain readable songs when a subfolder is unavailable, and reuse metadata for files that have not changed during the current session.
+Playback keeps the queue you started, even when you filter, sort, or browse another playlist. Shuffle plays each queued song once per cycle, and Previous retraces that order. Automatic song changes center the new row in the current library or playlist where space allows. Next and Previous also center the new row when shuffle is on; with shuffle off, they scroll down or up by one song row. Shuffle and repeat-song settings are remembered between sessions. Folder scans show progress, retain readable songs when a subfolder is unavailable, and reuse metadata for files that have not changed during the current session.
 
 For MP3 files loaded from a folder, open the song's menu by right-clicking its row or clicking its three-dot button, then choose **Update thumbnail**. The app searches MusicBrainz and Cover Art Archive using the song, artist and album names. Matches to the tagged album appear first, followed by likely original studio albums ahead of compilations and greatest-hits releases. Editions of the same album are grouped together. Use **Next 4** to see more covers and **Previous 4** to return to earlier choices. You can adjust the song, artist and optional album search fields without changing the song's tags. Choose **Save cover** to replace the embedded front cover and update the row and player thumbnails. Searching or cancelling does not modify the file. Other embedded pictures and the song's text tags are retained. This action requires an internet connection; embedding covers in other audio formats is not supported yet.
 
 Your library and playlists are saved locally with the app. If you clear or unload the library, playlist assignments are retained and return when the same files are loaded again.
+
+## Chromecast music
+
+Click the **Cast** icon beside the volume slider and choose a TV or speaker. Keep the device on and connected to the same local network as your computer. **Refresh** searches again if it does not appear. Your current song transfers at its current position; a paused song stays paused. You can also connect first and then choose a song.
+
+While connected, Nightwave's play/pause, Previous/Next, seek, shuffle, repeat, and volume controls operate on the Cast device. Open the Cast picker and choose **Stop casting** to stop TV playback, then press Play to continue on your computer. Closing Nightwave stops casting. Your computer needs to stay running because it streams the selected file directly over your local network; your library is not uploaded. Network isolation or a firewall blocking local discovery or incoming streaming connections can prevent casting. Nightwave serves audio on TCP port **40789**. If your TV connects but cannot fetch music, the Cast picker opens **Firewall help** with instructions for that device. You can also open it yourself from the picker. On Linux with UFW and PolicyKit installed, **Allow this device** requests administrator authentication and adds a rule for only the selected device and streaming port. **Copy command** offers a terminal alternative, and **Retry casting** tries the connection again. Other firewall systems receive manual instructions.
+
+With UFW, allow only your Cast device to reach it (replace `192.168.1.9` with its IP address):
+
+```bash
+sudo ufw allow from 192.168.1.9 to any port 40789 proto tcp comment 'Nightwave Cast audio'
+```
+
+Nightwave uses the same port on every launch so this rule stays valid. If the port is already occupied, close other Nightwave instances or launch with `NIGHTWAVE_CAST_PORT` set to another port and adjust the firewall rule accordingly.
+
+Casting uses Google's standard media receiver. Audio compatibility depends on the Cast device and codec; unsupported files produce a playback error and are not automatically converted. The Cast picker’s **Display mode** defaults to **Music only**, which sends the original audio file to the default receiver without creating a video. Karaoke is opt-in through **Karaoke · Current line**, **Karaoke · Scrolling with fades**, or **Karaoke · Scrolling with word highlights**. Nightwave remembers the selected mode; changes apply to the next song or reconnect. The TV lyric layout follows Nightwave’s own karaoke view: white Manrope text with a dark shadow, yellow words at their onset when highlighting is selected, and current/upcoming lines moving together with the same progression and fades. A warm, softly lit backdrop uses the karaoke lounge’s palette. Word highlighting uses embedded word timing where available and otherwise estimates timing across each line; estimates may differ from the singing.
+
+Karaoke modes render embedded SYLT or LRC timed lyrics directly into a 720p H.264/AAC video, using the default receiver without relying on its audio caption display. Install FFmpeg (with libx264 and libass) on the computer to use them; missing FFmpeg produces a message explaining how to choose Music only. Songs without timed lyrics play as audio. The full video is prepared before playback, with progress shown in Nightwave. Pause and seeking use the usual controls. Videos are cached in a bounded temporary directory for the current Nightwave session and removed on normal exit; source music files are never modified. Each karaoke mode has its own cached video. Animated modes may take longer to prepare. The bundled Manrope font is distributed under its SIL Open Font License in `assets/fonts/Manrope-OFL.txt`. Visualizers are not cast.
 
 ## Phone sync
 
@@ -86,7 +106,11 @@ For KDE systems, Nightwave can fall back to `kioclient5` when GIO cannot access 
 | `renderer-core.js` | Transaction handling, playback queues, text escaping, and click timing |
 | `music-library.js` | Bounded scanning and metadata caching |
 | `artwork-search.js` | Online cover lookup, bounded downloads, and temporary cover selections |
-| `visualizer.js` | Shared audio analysis, sidebar spectrum, and three main visualizers |
+| `visualizer.js` | Shared audio analysis, sidebar spectrum, and five main visualizers |
+| `karaoke.js` and `karaoke-core.js` | Embedded lyric timing, word highlighting, and local karaoke display |
+| `casting.js`, `cast-stream.js`, and `cast-ui.js` | Cast discovery, playback, local media streaming, and device picker |
+| `cast-video.js` and `cast-lyrics.js` | TV karaoke layout, timed captions, and temporary video preparation |
+| `cast-firewall.js` | Device-specific firewall guidance and authenticated UFW rules |
 | `phone-sync.js` | File fingerprints and verified phone transfers |
 | `tag-worker.js` | Tag writes outside the Electron main thread |
 | `index.html` and `styles.css` | Application interface and visual styling |
@@ -105,5 +129,7 @@ node --check app.js
 node --check main.js
 node --check preload.js
 ```
+
+`npm run test:cast` checks Cast controls, discovery, protocol compatibility, device-specific firewall actions, and local HTTP streaming with seeking. It opens a temporary local port. With FFmpeg and ffprobe installed, it also renders short videos and checks lyric visibility, scrolling, fades, word timing, caching, and cancellation. Firewall actions are mocked and do not change the computer's firewall.
 
 `npm run test:electron` runs isolated desktop checks with temporary app storage, including actual IndexedDB rollback, metadata quoting, playback, and the preload bridge. This headless test command disables Chromium's OS sandbox for constrained test environments; normal `npm start` does not. Phone transfers use mocked backends in the regression suite and still need verification with a connected device.

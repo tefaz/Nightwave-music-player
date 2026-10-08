@@ -9,6 +9,19 @@ const { createPhoneSync, playlistFolder } = require('./phone-sync');
 const { createArtworkSearch } = require('./artwork-search');
 const { readEmbeddedLyrics, removeLyricsTimestamps } = require('./lyrics');
 const { timedLyrics } = require('./karaoke-core');
+const { lyricsWebVtt } = require('./cast-lyrics');
+const { Casting } = require('./casting');
+const casting = new Casting();
+const { CastVideo, normalizeCastMode } = require('./cast-video');
+const castVideo = new CastVideo();
+const { createCastFirewall } = require('./cast-firewall');
+const { DEFAULT_CAST_PORT } = require('./cast-stream');
+const castFirewall = createCastFirewall();
+for (const event of ['devices', 'status']) casting.on(event, value => {
+  if (event === 'status' && value.connected === false) { ++castLoadRevision; castVideo.cancel(); }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(`cast:${event}`, value);
+});
+let castLoads = Promise.resolve(), castLoadRevision = 0;
 
 const library = createLibrary({ createThumbnail: picture => {
   if (!picture.data?.length || picture.data.length > 10 * 1024 * 1024) return null;
@@ -164,7 +177,7 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => { globalShortcut.unregisterAll(); casting.close(); castVideo.close(); });
 
 handle('music:pick-folder', async (event, requestId) => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
@@ -259,3 +272,78 @@ handle('window:toggle-maximize', event => {
   return window.isMaximized();
 });
 handle('window:close', event => BrowserWindow.fromWebContents(event.sender)?.close());
+
+handle('cast:discover', () => casting.discover());
+handle('cast:connect', (_event, id) => casting.connect(id));
+handle('cast:disconnect', () => { ++castLoadRevision; castVideo.cancel(); return casting.disconnect(); });
+handle('cast:load', (_event, track) => {
+  const revision = ++castLoadRevision;
+  castVideo.cancel();
+  const load = castLoads.catch(() => {}).then(async () => {
+    if (revision !== castLoadRevision) return;
+    if (!track || typeof track.id !== 'string') throw new Error('Invalid cast track.');
+    const mode = normalizeCastMode(track.karaokeMode);
+    const filePath = await audioFile(track.path);
+    if (revision !== castLoadRevision) return;
+    let captionVtt = null, duration = 0, timedLines = [];
+    if (mode !== 'music') {
+      try {
+        const { parseFile } = await import('music-metadata');
+        const metadata = await parseFile(filePath, { skipCovers: true });
+        duration = metadata.format.duration || 0;
+        timedLines = timedLyrics(metadata);
+        captionVtt = lyricsWebVtt(timedLines, metadata.format.duration);
+      } catch (error) { console.warn('Cast timed lyrics could not be read:', error.message); }
+    }
+    if (revision !== castLoadRevision) return;
+    let mediaPath = filePath;
+    if (captionVtt) {
+      const progress = seconds => {
+        if (revision === castLoadRevision && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('cast:status', { preparingLyrics: true, trackId: track.id,
+            preparationPercent: duration ? Math.min(99, Math.floor(seconds / duration * 100)) : null });
+        }
+      };
+      progress(0);
+      try { mediaPath = await castVideo.render({ filePath, captionVtt, title: track.title, artist: track.artist, onProgress: progress, mode, timedLines }); }
+      finally {
+        if (revision === castLoadRevision && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('cast:status', { preparingLyrics: false });
+        }
+      }
+    }
+    if (revision !== castLoadRevision) return;
+    try {
+      const result = await casting.load({ ...track, karaokeMode: mode, captions: mode !== 'music', path: mediaPath, captionVtt: null, videoLyrics: Boolean(captionVtt) });
+      castVideo.activePath = captionVtt ? mediaPath : null;
+      return result;
+    }
+    catch (error) {
+      if (casting.lastLoadFailure?.kind === 'stream-unreachable' && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('cast:status', { firewallDeviceId: casting.device?.id, firewallTrackId: track.id });
+      }
+      throw error;
+    }
+  });
+  castLoads = load;
+  return load;
+});
+handle('cast:command', async (_event, command, value) => {
+  if (command === 'stop') { ++castLoadRevision; castVideo.cancel(); await castLoads.catch(() => {}); }
+  return casting.command(command, value);
+});
+
+function castFirewallTarget(id) {
+  const device = casting.devices?.get(id);
+  const port = casting.stream?.diagnostics?.().port || DEFAULT_CAST_PORT;
+  return { device, port };
+}
+handle('cast:firewall-info', async (_event, id) => {
+  const { device, port } = castFirewallTarget(id);
+  const info = await castFirewall.info(device, port);
+  return { ...info, streamUnreachable: casting.lastLoadFailure?.host === device.host && casting.lastLoadFailure?.kind === 'stream-unreachable' };
+});
+handle('cast:firewall-apply', (_event, request) => {
+  const { device, port } = castFirewallTarget(request?.deviceId);
+  return castFirewall.apply(device, port, request);
+});
